@@ -1,7 +1,10 @@
 import radb
-import sql2ra
+import radb.parse
+import radb.ast
 import sqlparse
 import unittest
+
+import sql2ra
 
 '''
  Public unit tests for WMDK milestone 1.
