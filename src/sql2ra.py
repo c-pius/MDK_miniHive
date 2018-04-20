@@ -9,7 +9,12 @@ def project(tokens: sqlparse.sql.TokenList):
         if tokens[i].match(sqlparse.tokens.DML, ['SELECT']):
             projectionToken = tokens[i + 1]
             if projectionToken.ttype == sqlparse.tokens.Token.Wildcard:
-                return select(tokens)
+                selected = select(tokens)
+                if selected[0] == '(' and selected[-1] == ')':
+                    selected = selected[1:]
+                    selected = selected[:-1]
+                return selected
+
             else:
                 return '\project_{{{0}}} {1}'.format(projectionToken.value.replace(', ', ',').replace(',', ', '), select(tokens))
 
@@ -19,7 +24,7 @@ def select(tokens: sqlparse.sql.TokenList):
     tables = getTables(tokens)
     if hasattr(tokens[-1], 'M_OPEN'):
         conditions = getConditions(tokens[-1])
-        return '\select_{{{0}}} {1}'.format(conditions, tables)
+        return '(\select_{{{0}}} {1})'.format(conditions, tables)
     else:
         return tables
 
@@ -57,14 +62,14 @@ def getIdentifiers(obj):
             if len(identifier.tokens) == 1:
                 renamedIdentifiers.append(identifier.value)
             else:
-                renamedIdentifiers.append('({})'.format(renameIdentifiers(identifier.tokens)))
+                renamedIdentifiers.append(renameIdentifiers(identifier.tokens))
             
         joinedIdentifiers = ''
         for i in range(len(renamedIdentifiers)):
             if i == 0:
                 joinedIdentifiers = '({} \\cross {})'.format(renamedIdentifiers[i], renamedIdentifiers[i+1])
             elif i > 1:
-                joinedIdentifiers = '{} \\cross {}'.format(joinedIdentifiers, renamedIdentifiers[i])
+                joinedIdentifiers = '({} \\cross {})'.format(joinedIdentifiers, renamedIdentifiers[i])
 
         return joinedIdentifiers
     else:
@@ -74,7 +79,7 @@ def renameIdentifiers(tokens: sqlparse.sql.TokenList):
     cleanedTokens = removeWhitespaceTokens(tokens)
     for i in range(len(cleanedTokens)):
         if type(cleanedTokens[i]) == sqlparse.sql.Identifier:
-            return '\\rename_{{{0}: *}} {1}'.format(cleanedTokens[i].value, cleanedTokens[i-1].value)
+            return '(\\rename_{{{0}: *}} {1})'.format(cleanedTokens[i].value, cleanedTokens[i-1].value)
     
     return 'invalid'
 
