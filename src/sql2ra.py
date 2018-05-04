@@ -1,10 +1,17 @@
 import sqlparse
+import radb
+import radb.parse
+import radb.ast
 
 def translate(stmt: sqlparse.sql.Statement):
     # remove unnecessary tokens
     cleanedTokens = cleanTokens(stmt.tokens)
     
-    return translateStatment(cleanedTokens)
+    translatedStatement = translateStatment(cleanedTokens)
+    # also checks if the transated statement is valid
+    return radb.parse.one_statement_from_string(translatedStatement + ';')  
+
+    # return translateStatment(cleanedTokens)
 
 def translateStatment(tokens: sqlparse.sql.TokenList):
     # get index of the select token
