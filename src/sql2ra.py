@@ -2,16 +2,12 @@ import sqlparse
 import radb
 import radb.parse
 import radb.ast
+from radb.parse import RAParser as sym
 
 def translate(stmt: sqlparse.sql.Statement):
     # remove unnecessary tokens
     cleanedTokens = cleanTokens(stmt.tokens)
-    
-    translatedStatement = translateStatment(cleanedTokens)
-    # also checks if the transated statement is valid
-    return radb.parse.one_statement_from_string(translatedStatement + ';')  
-
-    # return translateStatment(cleanedTokens)
+    return translateStatment(cleanedTokens)
 
 def translateStatment(tokens: sqlparse.sql.TokenList):
     # get index of the select token
@@ -28,12 +24,30 @@ def translateStatment(tokens: sqlparse.sql.TokenList):
 
     # no project statement necessary if wildcard given
     if projectionToken.ttype == sqlparse.tokens.Token.Wildcard:
-        # remove surrounding parenthesis from the statement
-        return removeSurroundingParenthesis(statement)
+        return statement
+    # add projection
     else:
-        # ensure there are single whitespaces after commas
-        projection = projectionToken.value.replace(' ', '').replace(',', ', ')
-        return '\project_{{{0}}} {1}'.format(projection, statement)
+        # get identifiers for projection
+        projectionIdentifiers = getProjectionIdentifiers(projectionToken)
+
+        projection = radb.ast.Project(projectionIdentifiers, statement)
+        return projection
+
+def getProjectionIdentifiers(projectionToken: sqlparse.tokens.Token):
+    attributes = []
+
+    # stupid approach by splitting identifers at ',' but works...
+    separatedIdentifers = str(projectionToken.normalized).replace(' ', '').split(',')
+    for identifier in separatedIdentifers:
+        values = identifier.split('.')
+        # length = 1 => simply state the identifier
+        if len(values) == 1:
+            attributes.append(radb.ast.AttrRef(None, str(values[0])))
+        # length = 2 => attribute made up of relation and identifier
+        elif len(values) == 2:
+            attributes.append(radb.ast.AttrRef(str(values[0]), str(values[1])))
+
+    return attributes
 
 # gets the select statement including the conditions and tables
 def select(tokens: sqlparse.sql.TokenList):
@@ -47,27 +61,84 @@ def select(tokens: sqlparse.sql.TokenList):
     if not whereToken == None:
         # get the conditions for the select statement
         conditions = getConditions(whereToken)
-        return '(\select_{{{0}}} {1})'.format(conditions, relations)
+        select = radb.ast.Select(conditions, relations)
+        return select
     # return blank relations if no where token available
     else:
         return relations
 
 # gets conditions for the select statement
-def getConditions(token: sqlparse.sql.Token):
-    # extract all comparison statments
-    comparisons = [comparison.value for comparison in token.tokens if type(comparison) == sqlparse.sql.Comparison]
-    # ensure there are single whitespaces between comparisons 
-    comparisons = [comparison.replace(' ', '').replace('=', ' = ') for comparison in comparisons]
+def getConditions(whereToken: sqlparse.sql.Token):
 
-    # return single comparison
-    if len(comparisons) == 1:
-        return comparisons[0]
-    # join multiple comparisons with AND
-    elif len(comparisons) > 1:
-        #add parenthisis if joinig multiple comparisons
-        return ' and '.join(['({})'.format(comparison) for comparison in comparisons]) 
+    # clean tokens and strip where token
+    cleanedTokens = cleanTokens(whereToken.tokens)
+    cleanedTokens = cleanedTokens[1:]
+
+    # build a list of prepared comparisions and 'AND's and 'OR's
+    comparisons = []
+    for token in cleanedTokens:
+        comparisons.append(getComparison(token))
+
+    # combine the list of comparisions
+    combinedComparisons = None
+    for i in range(len(comparisons)):
+        if type(comparisons[i]) == radb.ast.ValExprBinaryOp:
+            # first comparision => take as is
+            if combinedComparisons == None:
+                combinedComparisons = comparisons[i]
+            # combine following comparisions with the already combine ones
+            else:
+                combinedComparisons = radb.ast.ValExprBinaryOp(combinedComparisons, comparisons[i-1], comparisons[i])
+          
+    return combinedComparisons
+
+def getComparison(comparisonToken: sqlparse.sql.Token):
+    # comparisons consist of left operator right => get each and combine them 
+    if type(comparisonToken) == sqlparse.sql.Comparison:
+        tokens = cleanTokens(comparisonToken.tokens)
+        left = getComparisonValue(tokens[0])
+        operator = getComparisonOperator(tokens[1])
+        right = getComparisonValue(tokens[2])
+        comparison = radb.ast.ValExprBinaryOp(left, operator, right)
+        return comparison
+    elif comparisonToken.value == 'and':
+        return sym.AND
+    elif comparisonToken.value == 'or':
+        return sym.OR
     else:
-        Exception('NO COMPARISONS FOUND')
+        raise Exception('error when parsing comparisons')
+
+def getComparisonValue(valueToken: sqlparse.sql.Token):
+    if valueToken.ttype == sqlparse.tokens.Number.Integer or valueToken.ttype == sqlparse.tokens.Number.Float:
+        return radb.ast.RANumber(valueToken.value)        
+    elif valueToken.ttype == sqlparse.tokens.String.Single:
+        return radb.ast.RAString(valueToken.value)
+    else:
+        return getAttributeIdentifiers(valueToken)
+
+def getComparisonOperator(operatorToken: sqlparse.sql.Token):
+    if operatorToken.value == '=':
+        return sym.EQ
+    elif operatorToken.value == '!=':
+        return sym.NE
+    elif operatorToken.value == '<':
+        return sym.LT
+    elif operatorToken.value == '>':
+        return sym.GT
+    elif operatorToken.value == '<=':
+        return sym.LE
+    elif operatorToken.value == '>=':
+        return sym.GE
+    else:
+        raise Exception('error when parsing comparison operator')
+
+def getAttributeIdentifiers(token: sqlparse.sql.Token):
+    if len(token.tokens) == 1:
+        return radb.ast.AttrRef(None, str(token.tokens[0]))
+    elif len(token.tokens) == 3:
+        return radb.ast.AttrRef(str(token.tokens[0]), str(token.tokens[2]))
+    else:
+        raise Exception('error when parsing comparison identifiers')
 
 # gets the relations joined and renamed if necessary
 def getRelations(tokens: sqlparse.sql.TokenList):
@@ -94,16 +165,18 @@ def joinRelations(relations: []):
     if not len(relations) > 1:
         raise Exception('INVALID NUMBER OF RELATIONS FOR JOINING')
 
-    joinedRelations = ''
+    #joinedRelations = ''
+    crossedRelations = None
     for i in range(len(relations)):
         # join the first two relations
         if i == 0:
-            joinedRelations = '({} \\cross {})'.format(relations[i], relations[i+1])
+            crossedRelations = radb.ast.Cross(relations[i], relations[i+1])
         # join the next relation with the prvious statment starting from the third relation
         elif i > 1:
-            joinedRelations = '({} \\cross {})'.format(joinedRelations, relations[i])
+            crossedRelations = radb.ast.Cross(crossedRelations, relations[i])
 
-    return joinedRelations
+    return crossedRelations
+    #return joinedRelations
 
 # gets the token specifying the used relations
 def getRelationsToken(tokens: sqlparse.sql.TokenList):
@@ -132,7 +205,8 @@ def getRenamedRelation(relationIdentifier: sqlparse.sql.Identifier):
         return renameRelation(relationIdentifier.tokens)
     # no renaming necessary
     else:
-        return relationIdentifier.value
+        relation = radb.ast.RelRef(relationIdentifier.value)
+        return relation
 
 # performs the renaming of a SINGLE relation
 def renameRelation(tokens: sqlparse.sql.TokenList):
@@ -142,7 +216,8 @@ def renameRelation(tokens: sqlparse.sql.TokenList):
     
     # perform renaming if 2 tokens remain
     if len(cleanedTokens) == 2:
-        return '(\\rename_{{{0}: *}} {1})'.format(cleanedTokens[1].value, cleanedTokens[0].value)
+        renamed = radb.ast.Rename(cleanedTokens[1].value, None, radb.ast.RelRef(cleanedTokens[0].value))
+        return renamed
     else:
         raise Exception('RENAMING FAILED')
 
@@ -159,10 +234,3 @@ def removeWhitespaceTokens(tokens: sqlparse.sql.TokenList):
 # removes all 'distinct' keyword tokens
 def removeDistinct(tokens: sqlparse.sql.TokenList):
     return [token for token in tokens if not token.normalized == 'DISTINCT']
-
-# removes surrounding parenthesis
-def removeSurroundingParenthesis(statement: str):
-    if statement[0] == '(' and statement[-1] == ')':
-        statement = statement[1:]
-        statement = statement[:-1]
-    return statement
