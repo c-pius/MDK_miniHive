@@ -101,9 +101,9 @@ def getComparison(comparisonToken: sqlparse.sql.Token):
         right = getComparisonValue(tokens[2])
         comparison = radb.ast.ValExprBinaryOp(left, operator, right)
         return comparison
-    elif comparisonToken.value == 'and':
+    elif comparisonToken.normalized == 'AND':
         return sym.AND
-    elif comparisonToken.value == 'or':
+    elif comparisonToken.normalized == 'OR':
         return sym.OR
     else:
         raise Exception('error when parsing comparisons')
@@ -117,17 +117,17 @@ def getComparisonValue(valueToken: sqlparse.sql.Token):
         return getAttributeIdentifiers(valueToken)
 
 def getComparisonOperator(operatorToken: sqlparse.sql.Token):
-    if operatorToken.value == '=':
+    if operatorToken.normalized == '=':
         return sym.EQ
-    elif operatorToken.value == '!=':
+    elif operatorToken.normalized == '!=':
         return sym.NE
-    elif operatorToken.value == '<':
+    elif operatorToken.normalized == '<':
         return sym.LT
-    elif operatorToken.value == '>':
+    elif operatorToken.normalized == '>':
         return sym.GT
-    elif operatorToken.value == '<=':
+    elif operatorToken.normalized == '<=':
         return sym.LE
-    elif operatorToken.value == '>=':
+    elif operatorToken.normalized == '>=':
         return sym.GE
     else:
         raise Exception('error when parsing comparison operator')
@@ -165,7 +165,6 @@ def joinRelations(relations: []):
     if not len(relations) > 1:
         raise Exception('INVALID NUMBER OF RELATIONS FOR JOINING')
 
-    #joinedRelations = ''
     crossedRelations = None
     for i in range(len(relations)):
         # join the first two relations
@@ -176,7 +175,6 @@ def joinRelations(relations: []):
             crossedRelations = radb.ast.Cross(crossedRelations, relations[i])
 
     return crossedRelations
-    #return joinedRelations
 
 # gets the token specifying the used relations
 def getRelationsToken(tokens: sqlparse.sql.TokenList):
