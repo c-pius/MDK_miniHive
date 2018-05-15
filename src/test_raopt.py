@@ -45,82 +45,82 @@ class TestRuleBreakUpSelections(unittest.TestCase):
                     "\select_{E.pizza = 'mushroom'} \select_{E.price < 10} \\rename_{E: *}(Eats);")
 
 
-# '''
-# Tests selection pushdown.
-# Assumes that conjunctions in selections have been broken up.
-# '''
-# class TestRulePushDownSelections(unittest.TestCase):
+'''
+Tests selection pushdown.
+Assumes that conjunctions in selections have been broken up.
+'''
+class TestRulePushDownSelections(unittest.TestCase):
 
-#     def _check(self, input, expected):
-#         # The data dictionary records the relational schema.
-#         dd = {}
-#         dd["Person"] = {"name": "string", "age": "integer", "gender": "string"}
-#         dd["Eats"] = {"name": "string", "pizza": "string"}
-#         dd["Serves"] = {"pizzeria": "string", "pizza": "string", "price": "integer"}
+    def _check(self, input, expected):
+        # The data dictionary records the relational schema.
+        dd = {}
+        dd["Person"] = {"name": "string", "age": "integer", "gender": "string"}
+        dd["Eats"] = {"name": "string", "pizza": "string"}
+        dd["Serves"] = {"pizzeria": "string", "pizza": "string", "price": "integer"}
 
-#         computed_expr = raopt.rule_push_down_selections(radb.parse.one_statement_from_string(input), dd)
-#         expected_expr = radb.parse.one_statement_from_string(expected)        
-#         self.assertEqual(str(computed_expr), str(expected_expr))
+        computed_expr = raopt.rule_push_down_selections(radb.parse.one_statement_from_string(input), dd)
+        expected_expr = radb.parse.one_statement_from_string(expected)        
+        self.assertEqual(str(computed_expr), str(expected_expr))
 
-#     def test_select_select_person(self):
-#         self._check("\select_{gender = 'f'} (\select_{age = 16} Person);",
-#                     "\select_{gender = 'f'} (\select_{age = 16} Person);")
+    def test_select_select_person(self):
+        self._check("\select_{gender = 'f'} (\select_{age = 16} Person);",
+                    "\select_{gender = 'f'} (\select_{age = 16} Person);")
 
-#     def test_select_person(self):
-#         self._check("\select_{'f' = gender} Person;",
-#                     "\select_{'f' = gender} Person;")
+    def test_select_person(self):
+        self._check("\select_{'f' = gender} Person;",
+                    "\select_{'f' = gender} Person;")
 
-#     def test_project_select_person(self):
-#         self._check("\project_{name}(\select_{gender = 'm'} Person);",
-#                     "\project_{name}(\select_{gender = 'm'} Person);")
+    def test_project_select_person(self):
+        self._check("\project_{name}(\select_{gender = 'm'} Person);",
+                    "\project_{name}(\select_{gender = 'm'} Person);")
 
-#     def test_select_gender_person_cross_eats(self):
-#         self._check("\select_{gender = 'm'} (Person \cross Eats);",
-#                     "(\select_{gender = 'm'} Person) \cross Eats;")
+    def test_select_gender_person_cross_eats(self):
+        self._check("\select_{gender = 'm'} (Person \cross Eats);",
+                    "(\select_{gender = 'm'} Person) \cross Eats;")
 
-#     def test_select_pizza_person_cross_eats(self):
-#         self._check("\select_{pizza = 'mushroom'} (Person \cross Eats);",
-#                     "Person \cross (\select_{pizza = 'mushroom'} Eats);")   
+    def test_select_pizza_person_cross_eats(self):
+        self._check("\select_{pizza = 'mushroom'} (Person \cross Eats);",
+                    "Person \cross (\select_{pizza = 'mushroom'} Eats);")   
 
-#     def test_select_pizza_select_gender_person_cross_eats(self):
-#         self._check("\select_{pizza = 'mushroom'} \select_{gender = 'm'} (Person \cross Eats);",
-#                     "(\select_{gender = 'm'} Person) \cross (\select_{pizza = 'mushroom'} Eats);")       
+    def test_select_pizza_select_gender_person_cross_eats(self):
+        self._check("\select_{pizza = 'mushroom'} \select_{gender = 'm'} (Person \cross Eats);",
+                    "(\select_{gender = 'm'} Person) \cross (\select_{pizza = 'mushroom'} Eats);")       
 
-#     def test_select_person_cross_eats(self):
-#         self._check("\select_{Person.name = Eats.name} (Person \cross Eats);",
-#                     "\select_{Person.name = Eats.name} (Person \cross Eats);")
+    def test_select_person_cross_eats(self):
+        self._check("\select_{Person.name = Eats.name} (Person \cross Eats);",
+                    "\select_{Person.name = Eats.name} (Person \cross Eats);")
 
-#     def test_select_select_person_cross_eats(self):
-#         self._check("\select_{age = 16} \select_{Person.name = Eats.name} (Person \cross Eats);",
-#                     "\select_{Person.name = Eats.name} (\select_{age = 16}(Person) \cross Eats);")        
+    def test_select_select_person_cross_eats(self):
+        self._check("\select_{age = 16} \select_{Person.name = Eats.name} (Person \cross Eats);",
+                    "\select_{Person.name = Eats.name} (\select_{age = 16}(Person) \cross Eats);")        
 
-#     def test_select_age_person_cross_eats_cross_serves(self):
-#         self._check("\select_{age = 16} ((Person \cross Eats) \cross Serves);",
-#                     "(\select_{age = 16}(Person) \cross Eats \cross Serves);")        
+    def test_select_age_person_cross_eats_cross_serves(self):
+        self._check("\select_{age = 16} ((Person \cross Eats) \cross Serves);",
+                    "(\select_{age = 16}(Person) \cross Eats \cross Serves);")        
 
-#     def test_select_price_person_cross_eats_cross_serves(self):
-#         self._check("\select_{price < 10} ((Person \cross Eats) \cross Serves);",
-#                     "((Person \cross Eats) \cross \select_{price < 10}(Serves));")  
+    def test_select_price_person_cross_eats_cross_serves(self):
+        self._check("\select_{price < 10} ((Person \cross Eats) \cross Serves);",
+                    "((Person \cross Eats) \cross \select_{price < 10}(Serves));")  
 
-#     def test_select_select_3cross(self):
-#         self._check("""\select_{Eats.pizza = Serves.pizza} \select_{Person.name = Eats.name}
-#                        ((Person \cross Eats) \cross Serves);""",
-#                     """\select_{Eats.pizza = Serves.pizza}( \select_{Person.name = Eats.name}
-#                        (Person \cross Eats) \cross Serves );""") 
+    def test_select_select_3cross(self):
+        self._check("""\select_{Eats.pizza = Serves.pizza} \select_{Person.name = Eats.name}
+                       ((Person \cross Eats) \cross Serves);""",
+                    """\select_{Eats.pizza = Serves.pizza}( \select_{Person.name = Eats.name}
+                       (Person \cross Eats) \cross Serves );""") 
         
-#     def test_select_rename_eats(self):
-#         self._check("\select_{pizza = 'mushroom'} \\rename_{E: *}(Eats);",
-#                     "\select_{pizza = 'mushroom'} \\rename_{E: *}(Eats);")
+    def test_select_rename_eats(self):
+        self._check("\select_{pizza = 'mushroom'} \\rename_{E: *}(Eats);",
+                    "\select_{pizza = 'mushroom'} \\rename_{E: *}(Eats);")
 
-#     def test_select_rename_eats_prefix_notation(self):
-#         self._check("\select_{E.pizza = 'mushroom'} \\rename_{E: *}(Eats);",
-#                     "\select_{E.pizza = 'mushroom'} \\rename_{E: *}(Eats);")
+    def test_select_rename_eats_prefix_notation(self):
+        self._check("\select_{E.pizza = 'mushroom'} \\rename_{E: *}(Eats);",
+                    "\select_{E.pizza = 'mushroom'} \\rename_{E: *}(Eats);")
 
-#     def test_select_select_cross_2rename(self):
-#         self._check("""\select_{Eats1.pizza = Eats2.pizza} \select_{Eats1.name = 'Amy'} (\\rename_{Eats1: *}(Eats)
-#                        \cross \\rename_{Eats2: *}(Eats));""",
-#                     """\select_{Eats1.pizza = Eats2.pizza} ((\select_{Eats1.name = 'Amy'} \\rename_{Eats1: *}(Eats))
-#                        \cross \\rename_{Eats2: *}(Eats));""")
+    def test_select_select_cross_2rename(self):
+        self._check("""\select_{Eats1.pizza = Eats2.pizza} \select_{Eats1.name = 'Amy'} (\\rename_{Eats1: *}(Eats)
+                       \cross \\rename_{Eats2: *}(Eats));""",
+                    """\select_{Eats1.pizza = Eats2.pizza} ((\select_{Eats1.name = 'Amy'} \\rename_{Eats1: *}(Eats))
+                       \cross \\rename_{Eats2: *}(Eats));""")
 
 # '''
 # Tests that nested selections are properly merged.

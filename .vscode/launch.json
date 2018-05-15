@@ -8,7 +8,7 @@
             "type": "python",
             "request": "launch",
             "name": "Test",
-            "program": "D:\\repos\\MDK\\MDK_miniHive\\src\\test_sql2ra.py"
+            "program": "D:\\repos\\MDK\\MDK_miniHive\\src\\test_raopt.py"
         },
         {
             "type": "python",

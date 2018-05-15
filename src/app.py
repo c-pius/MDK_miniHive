@@ -10,8 +10,8 @@ dd = {}
 dd["Person"] = {"name": "string", "age": "integer", "gender": "string"}
 dd["Eats"] = {"name": "string", "pizza": "string"}
 
-ra = radb.parse.one_statement_from_string("\select_{Person.gender='f' and Person.age=16}(Person) \cross Eats;")
-new = raopt.rule_break_up_selections(ra)
+ra = radb.parse.one_statement_from_string("\select_{gender = 'm'} (Person \cross Eats);")
+new = raopt.rule_push_down_selections(ra, dd)
 print(new)
 
 # ra1 = radb.parse.one_statement_from_string("\select_{Person.gender = 'f' and Person.age = 16}(Person);")
