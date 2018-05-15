@@ -2,9 +2,124 @@ import radb.ast
 from typing import List
 from radb.parse import RAParser as sym
 
+def rule_introduce_joins(stmt):
+    return introduce_joins(stmt)
+
+def introduce_joins(stmt):
+    # bottom => return statement
+    if type(stmt) == radb.ast.RelRef:
+        return stmt
+    # project => dig deeper
+    elif type(stmt) == radb.ast.Project:
+        return radb.ast.Project(stmt.attrs, introduce_joins(stmt.inputs[0]))
+    # cross => dig deeper in both sides
+    elif type (stmt) == radb.ast.Cross:
+        left = introduce_joins(stmt.inputs[0])
+        right = introduce_joins(stmt.inputs[1])
+        return radb.ast.Cross(left, right)
+    # select
+    elif type(stmt) == radb.ast.Select:
+        # get the expression
+        expression = stmt.cond
+        if is_expression_with_multiple_relation_attributes(expression):
+            # introduce a single join for the given expression
+            stmt_with_join = introduce_single_join(stmt.inputs[0], expression)
+            # join was introduced => check for further joins
+            if str(stmt) != str(stmt_with_join):
+                return introduce_joins(stmt_with_join)
+            # join was not introduced => keep the select and check for further joins
+            else:
+                return radb.ast.Select(stmt.cond, introduce_joins(stmt.inputs[0]))
+        # not a join condition selection => keep the select and check for further joins
+        else:
+            return radb.ast.Select(stmt.cond, introduce_joins(stmt.inputs[0]))
+    elif type(stmt) == radb.ast.Join:
+        left = introduce_joins(stmt.inputs[0])
+        right = introduce_joins(stmt.inputs[1])
+        return radb.ast.Join(left, stmt.cond, right)
+    else:
+        return stmt
+
+# recursivley merges a SINGLE expression to a cross
+def introduce_single_join(stmt, expression):
+    # bottom => return statement
+    if type(stmt) == radb.ast.RelRef:
+        return stmt
+    # project => dig deeper
+    elif type(stmt) == radb.ast.Project:
+        return radb.ast.Project(stmt.attrs, introduce_single_join(stmt.inputs[0], expression))
+    # select => dig deeper
+    elif type(stmt) == radb.ast.Select:
+        return radb.ast.Select(stmt.cond, introduce_single_join(stmt.inputs[0], expression))
+    # cross
+    elif type(stmt) == radb.ast.Cross:
+        # check if the expression applies to the cross => introduce join and remove cross
+        if is_cross_using_both_relations(stmt, expression):
+            return radb.ast.Join(stmt.inputs[0], expression, stmt.inputs[1])
+        # expression does not apply to the cross => dig deeper in both sides
+        else:
+            left = introduce_single_join(stmt.inputs[0], expression)
+            right = introduce_single_join(stmt.inputs[1], expression)
+            return radb.ast.Cross(left, right)
+    # cannot go any further
+    else:
+        return stmt
+
+
+# checks wether the current stmt is a cross combining both relations used in the expression
+def is_cross_using_both_relations(stmt, expression):
+    assert(type(stmt) == radb.ast.Cross)
+    
+    # get statements of the cross
+    left = stmt.inputs[0]
+    right = stmt.inputs[1]
+
+    # get names of relations used in the cross
+    left_relation_names = get_relation_names(left)
+    right_relation_names = get_relation_names(right)
+
+    # get names of relations used in the expression
+    expression_attributes_list = get_multiple_relation_expression_attributes(expression)
+    expression_left_relation, _ = expression_attributes_list[0]
+    expression_right_relation, _ = expression_attributes_list[1]
+
+    # check whether relations from both sides of the cross are used in the expression
+    if  expression_left_relation in left_relation_names:
+        if  expression_right_relation in right_relation_names:
+            return True
+        else:
+            return False
+    elif expression_right_relation in left_relation_names:
+        if expression_left_relation in right_relation_names:
+            return True
+        else:
+            return False
+    else:
+        return False
+
+# gets the relation names used in the statement
+def get_relation_names(stmt):
+    relation_names = []
+
+    # cross or join => combine relations from both sides
+    if type(stmt) == radb.ast.Cross or type(stmt) == radb.ast.Join:
+        left = stmt.inputs[0]
+        right = stmt.inputs[1]
+        relation_names.extend(get_relation_names(left))
+        relation_names.extend(get_relation_names(right))
+    # project or select => dig deeper
+    elif type(stmt) == radb.ast.Project or type(stmt) == radb.ast.Select:
+        relation_names.extend(get_relation_names(stmt.inputs[0]))
+    # must be rename or relation => get the name of the relation
+    else:
+        relation_names.append(get_relation_name(stmt))
+
+    return relation_names
+
+#######################################################
+
 def rule_merge_selections(stmt):
     return merge_selections(stmt)
-
 
 # recursively searches for select statement following each other and merges those two select statement
 def merge_selections(stmt):
@@ -243,7 +358,7 @@ def is_expression_with_multiple_relation_attributes(expression:radb.ast.FuncValE
     left = expression.inputs[0]
     right = expression.inputs[1]
 
-    if (type(left) == radb.ast.AttrRef or type(right) == radb.ast.AttrRef):
+    if (type(left) == radb.ast.AttrRef and type(right) == radb.ast.AttrRef):
         return True
     else:
         return False
