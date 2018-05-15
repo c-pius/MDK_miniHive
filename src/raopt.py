@@ -1,6 +1,51 @@
 import radb.ast
 from typing import List
+from radb.parse import RAParser as sym
 
+def rule_merge_selections(stmt):
+    return merge_selections(stmt)
+
+
+# recursively searches for select statement following each other and merges those two select statement
+def merge_selections(stmt):
+    # bottom => return statement
+    if type(stmt) == radb.ast.RelRef:
+        return stmt
+    # project => dig deeper
+    elif type(stmt) == radb.ast.Project:
+        return radb.ast.Project(stmt.attrs, merge_selections(stmt.inputs[0]))
+    # cross => dig deeper in both sides
+    elif type (stmt) == radb.ast.Cross:
+        left = merge_selections(stmt.inputs[0])
+        right = merge_selections(stmt.inputs[1])
+        return radb.ast.Cross(left, right)
+    # select
+    elif type(stmt) == radb.ast.Select:
+        # check if the following statement is also select and pull the second selct up
+        if type(stmt.inputs[0]) == radb.ast.Select:
+            # get the following select statement
+            expression = stmt.inputs[0].cond
+            # strip the select statement from the following statement
+            stripped_statement = strip_select(stmt.inputs[0])
+            # merge the current select with the following select 
+            merged_expression = radb.ast.ValExprBinaryOp(stmt.cond, sym.AND, expression)
+            # create the select with the merged statement
+            merged_select = radb.ast.Select(merged_expression, stripped_statement)
+            # check if there is another select one level deeper 
+            return merge_selections(merged_select)
+        # following statement is not a select => dig deeper
+        else:
+            return radb.ast.Select(stmt.cond, merge_selections(stmt.inputs[0]))
+
+
+# removes the top level select statement
+def strip_select(stmt):
+    if type(stmt) == radb.ast.Select:
+        return stmt.inputs[0]
+    else:
+        return stmt
+
+#################################################################
 
 def rule_push_down_selections(stmt, relation_schemas):
     #assert isinstance(stmt, radb.ast.Select)
