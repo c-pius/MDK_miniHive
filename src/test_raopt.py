@@ -62,9 +62,9 @@ class TestRulePushDownSelections(unittest.TestCase):
         expected_expr = radb.parse.one_statement_from_string(expected)        
         self.assertEqual(str(computed_expr), str(expected_expr))
 
-    def test_select_select_person(self):
-        self._check("\select_{gender = 'f'} (\select_{age = 16} Person);",
-                    "\select_{gender = 'f'} (\select_{age = 16} Person);")
+    # def test_select_select_person(self):
+    #     self._check("\select_{gender = 'f'} (\select_{age = 16} Person);",
+    #                 "\select_{gender = 'f'} (\select_{age = 16} Person);")
 
     def test_select_person(self):
         self._check("\select_{'f' = gender} Person;",
@@ -85,6 +85,10 @@ class TestRulePushDownSelections(unittest.TestCase):
     def test_select_pizza_select_gender_person_cross_eats(self):
         self._check("\select_{pizza = 'mushroom'} \select_{gender = 'm'} (Person \cross Eats);",
                     "(\select_{gender = 'm'} Person) \cross (\select_{pizza = 'mushroom'} Eats);")       
+
+    def test_cs(self):
+        self._check("\select_{Person.name = Eats.name} (Pizzeria \cross (Person \cross Eats));",
+                    "Pizzeria \cross (\select_{Person.name = Eats.name} (Person \cross Eats));")
 
     def test_select_person_cross_eats(self):
         self._check("\select_{Person.name = Eats.name} (Person \cross Eats);",
@@ -179,46 +183,46 @@ class TestIntroduceJoins(unittest.TestCase):
                        Serves.pizza} Serves;""")
 
 
-# '''
-# Tests all rules in combination.
-# '''
-# class TestAllSteps(unittest.TestCase):
+'''
+Tests all rules in combination.
+'''
+class TestAllSteps(unittest.TestCase):
 
-#     def _check(self, input, expected):
-#         dd = {}
-#         dd["Person"] = {"name": "string", "age": "integer", "gender": "string"}
-#         dd["Eats"] = {"name": "string", "pizza": "string"}
-#         dd["Serves"] = {"pizzeria": "string", "pizza": "string", "price": "integer"}
+    def _check(self, input, expected):
+        dd = {}
+        dd["Person"] = {"name": "string", "age": "integer", "gender": "string"}
+        dd["Eats"] = {"name": "string", "pizza": "string"}
+        dd["Serves"] = {"pizzeria": "string", "pizza": "string", "price": "integer"}
         
-#         ra0 = radb.parse.one_statement_from_string(input)
-#         ra1 = raopt.rule_break_up_selections(ra0)
-#         ra2 = raopt.rule_push_down_selections(ra1, dd)
-#         ra3 = raopt.rule_merge_selections(ra2)
-#         ra4 = raopt.rule_introduce_joins(ra3)
+        ra0 = radb.parse.one_statement_from_string(input)
+        ra1 = raopt.rule_break_up_selections(ra0)
+        ra2 = raopt.rule_push_down_selections(ra1, dd)
+        ra3 = raopt.rule_merge_selections(ra2)
+        ra4 = raopt.rule_introduce_joins(ra3)
 
-#         computed_expr = ra4
-#         expected_expr = radb.parse.one_statement_from_string(expected)        
-#         self.assertEqual(str(computed_expr), str(expected_expr))
+        computed_expr = ra4
+        expected_expr = radb.parse.one_statement_from_string(expected)        
+        self.assertEqual(str(computed_expr), str(expected_expr))
 
-#     # def test_project_select_person(self):
-#     #     self._check("\project_{name}(\select_{gender='f' and age=16} Person);",
-#     #                 "\project_{name}(\select_{gender = 'f' and age = 16} Person);")
+    # def test_project_select_person(self):
+    #     self._check("\project_{name}(\select_{gender='f' and age=16} Person);",
+    #                 "\project_{name}(\select_{gender = 'f' and age = 16} Person);")
 
-#     # def test_project_select_person(self):
-#     #     self._check("\select_{Person.name = Eats.name and Person.name = Eats.pizza} (Person \cross Eats);",
-#     #                 "Person \join_{Person.name = Eats.name and Person.name = Eats.pizza} Eats;")
+    # def test_project_select_person2(self):
+    #     self._check("\select_{Person.name = Eats.name and Person.name = Eats.pizza} (Person \cross Eats);",
+    #                  "Person \join_{Person.name = Eats.name and Person.name = Eats.pizza} Eats;")
 
-#     # def test_cross_cross(self):
-#     #     self._check("""\project_{Person.name} \select_{Eats.pizza = Serves.pizza and Person.name = Eats.name}
-#     #                    ((Person \cross Eats) \cross Serves);""",
-#     #                 """\project_{Person.name} ((Person \join_{Person.name = Eats.name} Eats)
-#     #                    \join_{Eats.pizza = Serves.pizza} Serves);""")
+    def test_cross_cross(self):
+        self._check("""\project_{Person.name} \select_{Eats.pizza = Serves.pizza and Person.name = Eats.name}
+                       ((Person \cross Eats) \cross Serves);""",
+                    """\project_{Person.name} ((Person \join_{Person.name = Eats.name} Eats)
+                       \join_{Eats.pizza = Serves.pizza} Serves);""")
     
-#     # def test_renamings(self):
-#     #     self._check("""\project_{P.name, E.pizza} (\select_{P.name = E.name}
-#     #                    ((\\rename_{P: *} Person) \cross (\\rename_{E: *} Eats)));""",
-#     #                 """\project_{P.name, E.pizza} ((\\rename_{P: *} Person) \join_{P.name = E.name}
-#     #                    (\\rename_{E: *} Eats));""")
+    def test_renamings(self):
+        self._check("""\project_{P.name, E.pizza} (\select_{P.name = E.name}
+                       ((\\rename_{P: *} Person) \cross (\\rename_{E: *} Eats)));""",
+                    """\project_{P.name, E.pizza} ((\\rename_{P: *} Person) \join_{P.name = E.name}
+                       (\\rename_{E: *} Eats));""")
 
 
 if __name__ == '__main__':

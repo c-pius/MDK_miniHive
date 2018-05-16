@@ -124,7 +124,7 @@ def rule_merge_selections(stmt):
 # recursively searches for select statement following each other and merges those two select statement
 def merge_selections(stmt):
     # bottom => return statement
-    if type(stmt) == radb.ast.RelRef:
+    if type(stmt) == radb.ast.RelRef or type(stmt) == radb.ast.Rename:
         return stmt
     # project => dig deeper
     elif type(stmt) == radb.ast.Project:
@@ -163,131 +163,127 @@ def strip_select(stmt):
 #################################################################
 
 def rule_push_down_selections(stmt, relation_schemas):
-    #assert isinstance(stmt, radb.ast.Select)
+    return push_down_selection_recursive(stmt, relation_schemas)
 
-    if type(stmt) == radb.ast.Project:
-        pushed_down_stmt = push_down_selection(stmt.inputs[0], relation_schemas)
-        return radb.ast.Project(stmt.attrs, pushed_down_stmt)
-    else:
-        return push_down_selection(stmt, relation_schemas)
-
-def push_down_selection(stmt: radb.ast.Select, relation_schemas):
-
-    # get list of single selection statements
-    selection_expressions: List[radb.ast.ValExpr] = get_selection_expressions(stmt)
-
-    # get list of single relations (has to account for renamed relations)
-    relations: List[radb.ast.RelExpr] = get_relations(stmt)
-
-    # build maps containing the expression and the expression attributes grouped by single or multiple relation statement
-    single_relation_expressions = {}
-    multiple_relation_expressions = {}
-    for expression in selection_expressions:
+def push_down_selection_recursive(stmt, relation_schemas):
+    # bottom => return statement
+    if type(stmt) == radb.ast.RelRef:
+        return stmt
+    # project => dig deeper
+    elif type(stmt) == radb.ast.Project:
+        return radb.ast.Project(stmt.attrs, push_down_selection_recursive(stmt.inputs[0], relation_schemas))
+    # cross => dig deeper in both sides
+    elif type (stmt) == radb.ast.Cross:
+        left = push_down_selection_recursive(stmt.inputs[0], relation_schemas)
+        right = push_down_selection_recursive(stmt.inputs[1], relation_schemas)
+        return radb.ast.Cross(left, right)
+    elif type(stmt) == radb.ast.Join:
+        left = push_down_selection_recursive(stmt.inputs[0], relation_schemas)
+        right = push_down_selection_recursive(stmt.inputs[1], relation_schemas)
+        return radb.ast.Join(left, stmt.cond, right)
+    # select
+    elif type(stmt) == radb.ast.Select:
+        expression = stmt.cond
+        stripped_statement = stmt.inputs[0] # removes the select from the current statement
+        pushed_down = None
         if is_expression_with_single_relation_attribute(expression):
-            single_relation_expressions[expression] = get_single_relation_expression_attribute(expression)
-        elif is_expression_with_multiple_relation_attributes(expression):
-            multiple_relation_expressions[expression] = get_multiple_relation_expression_attributes(expression)
-
-    # list containing selections that cannot be pushed down that are applied later
-    # remaining_selections: List[radb.ast.ValExpr] = []
-
-    # get a map of the relations including their real name and a list for storing expressions to push down: relation => (name, [])
-    relations_with_real_name = get_relations_with_real_name(relations)
-
-    # append all expressions using one relation only to the list associated to each relation included in the map of relations with name
-    for expression in single_relation_expressions:
-        attr_relation, attr_name = single_relation_expressions[expression]
-
-        # get the name of the relation from the schema => uses the first relation from the schema including the attribute
-        if attr_relation == None:
-            relation_key = next((relation_key for relation_key in relation_schemas.keys() if attr_name in relation_schemas[relation_key]), None)
-            if relation_key == None:
-                # remaining_selections.append(expression)
-                continue
+            expression_relation_name = get_relation_name_for_push_down(expression, relation_schemas)
+            if expression_relation_name != None:
+                pushed_down = push_down_select_using_single_relation(stripped_statement, expression, expression_relation_name)
             else:
-                attr_relation = relation_key
-                # check if the relation found from the schema was renamed in the statement
-                if not attr_relation in relations_with_real_name:
-                    renamed_relation_name = next((relation for relation in relations_with_real_name if relations_with_real_name[relation][1]  == attr_relation), None)
-                    attr_relation = renamed_relation_name
-                # else:
-                #     attr_relation = relation_key
+                return radb.ast.Select(expression, push_down_selection_recursive(stripped_statement, relation_schemas))
+        elif is_expression_with_multiple_relation_attributes(expression):
+            pushed_down = push_down_select_using_multiple_relations(stripped_statement, expression)
 
-        # continue if the relation is not included in the list of relations => should not happen
-        if not attr_relation in relations_with_real_name:
-                continue
-
-        # get the corresponding relation from the list of relations
-        relation = relations_with_real_name[attr_relation]
-        real_relation_name = relation[1]
-
-        # continue if the real name is not included in the schemas
-        if not real_relation_name in relation_schemas:
-            continue
-
-        # continue if the corresponding relation schema does not include the attribute
-        relation_schema = relation_schemas[real_relation_name]
-        if not attr_name in relation_schema:
-            continue
-
-        # append the current expression to the list of expressions to be pushed down of the current relation
-        relation[2].append(expression)
-
-    # push down expressions containing only a single relation to their corresponding relation
-    pushed_down_selections: List[radb.ast.RelExpr] = push_down_single_relation_expressions(relations_with_real_name)
-
-    # join the relations again using the cross join
-    joined_relations = None
-    for selection in pushed_down_selections:
-        if joined_relations == None:
-            joined_relations = selection
+        if pushed_down and str(pushed_down) != str(stmt):
+            # if check_for_selections_swapping_places(stmt, pushed_down, relation_schemas):
+            #     return stmt
+            # else:
+            #    return push_down_selection_recursive(pushed_down, relation_schemas)
+            return push_down_selection_recursive(pushed_down, relation_schemas)
         else:
-            joined_relations = radb.ast.Cross(joined_relations, selection)
-    
-    # push down selections using multiple relations to the corresponding cross joins
-    for expression in multiple_relation_expressions:
-        joined_relations = push_down_multiple_relation_expression(joined_relations, expression, multiple_relation_expressions[expression])
-
-    return joined_relations
-
-# pushed down an expression contianing to relations to the corresponding cross operatrion
-def push_down_multiple_relation_expression(statement, expression, expression_attributes):
-    # get the relations
-    attr_relation_1, attr_name_1 = expression_attributes[0]
-    attr_relation_2, attr_name_2 = expression_attributes[1]
-
-    # try to push down the selection to the corresponding cross
-    pushed_down = push_down_selection_to_corresponding_join(statement, expression, attr_relation_1, attr_relation_2)
-
-    # nothing was pushed down => apply the selection globally to the statement
-    if str(statement) == str(pushed_down):
-        return radb.ast.Select(expression, statement)
-
-    return pushed_down
-
-# recusrively searches for a cross including both relations to apply the selection to
-def push_down_selection_to_corresponding_join(statement, expression, relation1, relation2):   
-    if type(statement) == radb.ast.Cross:
-        # found the cross => apply selection
-        if get_relation_name(statement.inputs[0]) == relation1 and get_relation_name(statement.inputs[1]) == relation2:
-            return radb.ast.Select(expression, statement)
-        # some other join => try to apply selection to both sides
-        else:
-            left = push_down_selection_to_corresponding_join(statement.inputs[0], expression, relation1, relation2)
-            right = push_down_selection_to_corresponding_join(statement.inputs[1], expression, relation1, relation2)
-            return radb.ast.Cross(left, right)
-    # found relation => can't search any deeper
-    elif type(statement) == radb.ast.RelRef:
-        return statement
-    # found select/project => dig deeper
+            return radb.ast.Select(expression, push_down_selection_recursive(stripped_statement, relation_schemas))
+    # can't handle anything else
     else:
-        pushed_down = push_down_selection_to_corresponding_join(statement.inputs[0], expression, relation1, relation2)
-        if type(statement) == radb.ast.Select:
-            return radb.ast.Select(statement.cond, pushed_down)
-        elif type(statement) == radb.ast.Project:
-            return radb.ast.Project(statement.attr, pushed_down)
+        return stmt
+
+# # checks whether the pushing is only swapping places of selections (is kind of sketchy)
+# def check_for_selections_swapping_places(stmt, pushed_down, relation_schemas):
+#     original_selections = get_selection_expressions(stmt)
+#     new_selections = get_selection_expressions(pushed_down)
+#     new_selections.reverse()
+
+#     reversed_order = True
+#     for i in range(len(original_selections)):
+#         if str(original_selections[0]) != str(new_selections[0]):
+#             reversed_order = False
+    
+#     return reversed_order
+
+# gets the relation name or tries to find it from the relation schemas
+def get_relation_name_for_push_down(expression, relation_schemas):
+    expression_relation, expression_attribute_name = get_single_relation_expression_attribute(expression)
+    # no relation used in expression => find corresponding relation from the schemas
+    if expression_relation == None:
+        # get the first schema including the name => TODO: must be one only
+        expression_relation = next((relation_key for relation_key in relation_schemas.keys() if expression_attribute_name in relation_schemas[relation_key]), None)
+
+    return expression_relation
+
+def push_down_select_using_single_relation(stmt, expression, expression_relation_name):  
+    # bottom => return statement
+    if type(stmt) == radb.ast.RelRef:
+        relation_name = get_relation_name(stmt)
+        if relation_name == expression_relation_name:
+            return radb.ast.Select(expression, stmt)
         else:
-            return push_down_selection_to_corresponding_join(statement.inputs[0], expression, relation1, relation2)
+            return stmt
+    elif type(stmt) == radb.ast.Rename:
+        relation_name = stmt.inputs[0].rel
+        renamed_name = get_relation_name(stmt)
+        if (relation_name == expression_relation_name or renamed_name == expression_relation_name):
+            return radb.ast.Select(expression, stmt)
+        else:
+            return stmt
+    # project => dig deeper
+    elif type(stmt) == radb.ast.Project:
+        return radb.ast.Project(stmt.attrs, push_down_select_using_single_relation(stmt.inputs[0], expression, expression_relation_name))
+    # select => dig deeper
+    elif type(stmt) == radb.ast.Select:
+        return radb.ast.Select(stmt.cond, push_down_select_using_single_relation(stmt.inputs[0], expression, expression_relation_name))
+    # cross
+    elif type(stmt) == radb.ast.Cross:
+        left = push_down_select_using_single_relation(stmt.inputs[0], expression, expression_relation_name)
+        right = push_down_select_using_single_relation(stmt.inputs[1], expression, expression_relation_name)
+        return radb.ast.Cross(left, right)
+    # can't handle anything else
+    else:
+        return stmt
+
+# pushed down select to the corresponding cross (does not require realtion_schema since the relation has to be stated anyway)
+def push_down_select_using_multiple_relations(stmt, expression):
+    # bottom => return statement
+    if type(stmt) == radb.ast.RelRef:
+        return stmt
+    # project => dig deeper
+    elif type(stmt) == radb.ast.Project:
+        return radb.ast.Project(stmt.attrs, push_down_select_using_multiple_relations(stmt.inputs[0], expression))
+    # select => dig deeper
+    elif type(stmt) == radb.ast.Select:
+        return radb.ast.Select(stmt.cond, push_down_select_using_multiple_relations(stmt.inputs[0], expression))
+    # cross
+    elif type(stmt) == radb.ast.Cross:
+        # check if the expression applies to the cross => introduce join and remove cross
+        if is_cross_using_both_relations(stmt, expression):
+            return radb.ast.Select(expression, stmt)
+        # expression does not apply to the cross => dig deeper in both sides
+        else:
+            left = push_down_select_using_multiple_relations(stmt.inputs[0], expression)
+            right = push_down_select_using_multiple_relations(stmt.inputs[1], expression)
+            return radb.ast.Cross(left, right)
+    # can't handle anything else
+    else:
+        return stmt
 
 # gets the name of included relations according to the type of the statement
 def get_relation_name(statement: radb.ast.RelExpr):
@@ -297,49 +293,6 @@ def get_relation_name(statement: radb.ast.RelExpr):
         return get_relation_name(statement.inputs[0])
     elif type(statement) == radb.ast.Rename:
         return statement.relname
-
-# pushes down a selection using one relation only
-def push_down_single_relation_expressions(relations_with_real_name):
-        # list relations are stored in that have slections pushed down on them
-    pushed_down_selections: List[radb.ast.RelExpr] = []
-    
-    for relation_by_name in relations_with_real_name.values():
-        relation, real_name, expressions = relation_by_name
-
-        # reverse expressions to keep the same order as before
-        expressions.reverse()
-
-        # combine selection statement 
-        combined_statement = None
-        for expression in expressions:
-            # first selection => use expression and relation
-            if combined_statement == None:
-                combined_statement = radb.ast.Select(expression, relation)
-            # further selection => use expression and previous statement
-            else:
-                combined_statement = radb.ast.Select(expression, combined_statement)
-
-        # there was no selection => use the relation itself
-        if combined_statement == None:
-            pushed_down_selections.append(relation)
-        # there were selection => use the combined statement
-        else:
-            pushed_down_selections.append(combined_statement)
-
-    return pushed_down_selections
-
-#get a map of relations including their real name and an empty array to store the attributes to be applied in
-def get_relations_with_real_name(relations: radb.ast.RelExpr):
-    relations_with_name = {}
-    for relation in relations:
-        #standard realtion => add with name as is
-        if type(relation) == radb.ast.RelRef:
-            relations_with_name[relation.rel] = (relation, relation.rel, [])
-        #renamed relation => add with real name from input
-        elif type(relation) == radb.ast.Rename:
-            relations_with_name[relation.relname] = (relation, relation.inputs[0].rel, [])
-
-    return relations_with_name
 
 # checks wether the expression contains only a single relation
 def is_expression_with_single_relation_attribute(expression: radb.ast.FuncValExpr):
@@ -373,28 +326,6 @@ def get_multiple_relation_expression_attributes(expression: radb.ast.FuncValExpr
     right = expression.inputs[1]
     return [(left.rel, left.name), (right.rel, right.name)]
 
-#recusively get all relations included in the statement
-def get_relations(stmt: radb.ast.RelExpr):
-    relations: List[radb.ast.RelExpr] = []
-
-    # recusion end => return the relation or rename
-    if type(stmt) == radb.ast.RelRef or type(stmt) == radb.ast.Rename:
-        relations.append(stmt)
-        return relations
-    # cross => get relations to the left and relations to the right and merge them together with existing relations
-    elif type(stmt) == radb.ast.Cross:
-        leftRelations: List[radb.ast.RelExpr] = get_relations(stmt.inputs[0]) #stmt.inputs[0] = left
-        rightRelations: List[radb.ast.RelExpr] = get_relations(stmt.inputs[1]) #stmt.inputs[1] = right
-        relations.extend(leftRelations)
-        relations.extend(rightRelations)
-        return relations
-    # something else => dig deeper for relations
-    else:
-        deeper_relations = get_relations(stmt.inputs[0])
-        if len(deeper_relations) > 0:
-            relations.extend(deeper_relations)
-        return relations
-
 # recursively get all selection conditions included in the statment
 def get_selection_expressions(stmt: radb.ast.RelExpr):
     selections: List[radb.ast.ValExpr] = []
@@ -419,12 +350,15 @@ def get_selection_expressions(stmt: radb.ast.RelExpr):
 
 
 def rule_break_up_selections(stmt):
+    return break_up_selections(stmt)
+
+def break_up_selections(stmt):
     #break up a given select statement
     if type(stmt) == radb.ast.Select:
-        return break_up_selections_internal(stmt)
+        return break_up_single_selection(stmt)
     #create a new select statement with the broken up select statement
     elif type(stmt) == radb.ast.Project:
-        return radb.ast.Project(stmt.attrs, break_up_selections_internal(stmt.inputs[0]))
+        return radb.ast.Project(stmt.attrs, break_up_selections(stmt.inputs[0]))
     #create a new cross from both sides broken up
     elif type(stmt) == radb.ast.Cross:
         left = rule_break_up_selections(stmt.inputs[0])
@@ -434,9 +368,13 @@ def rule_break_up_selections(stmt):
     else:
         return stmt   
 
-def break_up_selections_internal(selectStmt: radb.ast.Select):
-    #assumes that there is only one input
-    return break_up(selectStmt.cond.inputs, selectStmt.inputs[0])
+def break_up_single_selection(stmt: radb.ast.Select):
+    expression = stmt.cond
+    if expression.op == sym.AND:
+        return break_up(stmt.cond.inputs, stmt.inputs[0])
+    else:
+        return stmt
+
 
 def break_up(conditions: [], input: radb.ast.RelExpr):
     if len(conditions) == 1:
@@ -445,3 +383,199 @@ def break_up(conditions: [], input: radb.ast.RelExpr):
         return radb.ast.Select(conditions[0], break_up(conditions[1:], input))
 
 
+
+
+
+
+
+# def rule_push_down_selections(stmt, relation_schemas):
+#     #assert isinstance(stmt, radb.ast.Select)
+
+#     if type(stmt) == radb.ast.Project:
+#         pushed_down_stmt = push_down_selection(stmt.inputs[0], relation_schemas)
+#         return radb.ast.Project(stmt.attrs, pushed_down_stmt)
+#     else:
+#         return push_down_selection(stmt, relation_schemas)
+
+# def push_down_selection(stmt: radb.ast.Select, relation_schemas):
+
+#     # get list of single selection statements
+#     selection_expressions: List[radb.ast.ValExpr] = get_selection_expressions(stmt)
+
+#     # get list of single relations (has to account for renamed relations)
+#     relations: List[radb.ast.RelExpr] = get_relations(stmt)
+
+#     # build maps containing the expression and the expression attributes grouped by single or multiple relation statement
+#     single_relation_expressions = {}
+#     multiple_relation_expressions = {}
+#     for expression in selection_expressions:
+#         if is_expression_with_single_relation_attribute(expression):
+#             single_relation_expressions[expression] = get_single_relation_expression_attribute(expression)
+#         elif is_expression_with_multiple_relation_attributes(expression):
+#             multiple_relation_expressions[expression] = get_multiple_relation_expression_attributes(expression)
+
+#     # list containing selections that cannot be pushed down that are applied later
+#     # remaining_selections: List[radb.ast.ValExpr] = []
+
+#     # get a map of the relations including their real name and a list for storing expressions to push down: relation => (name, [])
+#     relations_with_real_name = get_relations_with_real_name(relations)
+
+#     # append all expressions using one relation only to the list associated to each relation included in the map of relations with name
+#     for expression in single_relation_expressions:
+#         attr_relation, attr_name = single_relation_expressions[expression]
+
+#         # get the name of the relation from the schema => uses the first relation from the schema including the attribute
+#         if attr_relation == None:
+#             relation_key = next((relation_key for relation_key in relation_schemas.keys() if attr_name in relation_schemas[relation_key]), None)
+#             if relation_key == None:
+#                 # remaining_selections.append(expression)
+#                 continue
+#             else:
+#                 attr_relation = relation_key
+#                 # check if the relation found from the schema was renamed in the statement
+#                 if not attr_relation in relations_with_real_name:
+#                     renamed_relation_name = next((relation for relation in relations_with_real_name if relations_with_real_name[relation][1]  == attr_relation), None)
+#                     attr_relation = renamed_relation_name
+#                 # else:
+#                 #     attr_relation = relation_key
+
+#         # continue if the relation is not included in the list of relations => should not happen
+#         if not attr_relation in relations_with_real_name:
+#                 continue
+
+#         # get the corresponding relation from the list of relations
+#         relation = relations_with_real_name[attr_relation]
+#         real_relation_name = relation[1]
+
+#         # continue if the real name is not included in the schemas
+#         if not real_relation_name in relation_schemas:
+#             continue
+
+#         # continue if the corresponding relation schema does not include the attribute
+#         relation_schema = relation_schemas[real_relation_name]
+#         if not attr_name in relation_schema:
+#             continue
+
+#         # append the current expression to the list of expressions to be pushed down of the current relation
+#         relation[2].append(expression)
+
+#     # push down expressions containing only a single relation to their corresponding relation
+#     pushed_down_selections: List[radb.ast.RelExpr] = push_down_single_relation_expressions(relations_with_real_name)
+
+#     # join the relations again using the cross join
+#     joined_relations = None
+#     for selection in pushed_down_selections:
+#         if joined_relations == None:
+#             joined_relations = selection
+#         else:
+#             joined_relations = radb.ast.Cross(joined_relations, selection)
+    
+#     # push down selections using multiple relations to the corresponding cross joins
+#     for expression in multiple_relation_expressions:
+#         joined_relations = push_down_multiple_relation_expression(joined_relations, expression, multiple_relation_expressions[expression])
+
+#     return joined_relations
+
+# # pushed down an expression contianing to relations to the corresponding cross operatrion
+# def push_down_multiple_relation_expression(statement, expression, expression_attributes):
+#     # get the relations
+#     attr_relation_1, attr_name_1 = expression_attributes[0]
+#     attr_relation_2, attr_name_2 = expression_attributes[1]
+
+#     # try to push down the selection to the corresponding cross
+#     pushed_down = push_down_selection_to_corresponding_join(statement, expression, attr_relation_1, attr_relation_2)
+
+#     # nothing was pushed down => apply the selection globally to the statement
+#     if str(statement) == str(pushed_down):
+#         return radb.ast.Select(expression, statement)
+
+#     return pushed_down
+
+# # recusrively searches for a cross including both relations to apply the selection to
+# def push_down_selection_to_corresponding_join(statement, expression, relation1, relation2):   
+#     if type(statement) == radb.ast.Cross:
+#         # found the cross => apply selection
+#         if get_relation_name(statement.inputs[0]) == relation1 and get_relation_name(statement.inputs[1]) == relation2:
+#             return radb.ast.Select(expression, statement)
+#         # some other join => try to apply selection to both sides
+#         else:
+#             left = push_down_selection_to_corresponding_join(statement.inputs[0], expression, relation1, relation2)
+#             right = push_down_selection_to_corresponding_join(statement.inputs[1], expression, relation1, relation2)
+#             return radb.ast.Cross(left, right)
+#     # found relation => can't search any deeper
+#     elif type(statement) == radb.ast.RelRef:
+#         return statement
+#     # found select/project => dig deeper
+#     else:
+#         pushed_down = push_down_selection_to_corresponding_join(statement.inputs[0], expression, relation1, relation2)
+#         if type(statement) == radb.ast.Select:
+#             return radb.ast.Select(statement.cond, pushed_down)
+#         elif type(statement) == radb.ast.Project:
+#             return radb.ast.Project(statement.attr, pushed_down)
+#         else:
+#             return push_down_selection_to_corresponding_join(statement.inputs[0], expression, relation1, relation2)
+
+# # pushes down a selection using one relation only
+# def push_down_single_relation_expressions(relations_with_real_name):
+#         # list relations are stored in that have slections pushed down on them
+#     pushed_down_selections: List[radb.ast.RelExpr] = []
+    
+#     for relation_by_name in relations_with_real_name.values():
+#         relation, real_name, expressions = relation_by_name
+
+#         # reverse expressions to keep the same order as before
+#         expressions.reverse()
+
+#         # combine selection statement 
+#         combined_statement = None
+#         for expression in expressions:
+#             # first selection => use expression and relation
+#             if combined_statement == None:
+#                 combined_statement = radb.ast.Select(expression, relation)
+#             # further selection => use expression and previous statement
+#             else:
+#                 combined_statement = radb.ast.Select(expression, combined_statement)
+
+#         # there was no selection => use the relation itself
+#         if combined_statement == None:
+#             pushed_down_selections.append(relation)
+#         # there were selection => use the combined statement
+#         else:
+#             pushed_down_selections.append(combined_statement)
+
+#     return pushed_down_selections
+
+# #get a map of relations including their real name and an empty array to store the attributes to be applied in
+# def get_relations_with_real_name(relations: radb.ast.RelExpr):
+#     relations_with_name = {}
+#     for relation in relations:
+#         #standard realtion => add with name as is
+#         if type(relation) == radb.ast.RelRef:
+#             relations_with_name[relation.rel] = (relation, relation.rel, [])
+#         #renamed relation => add with real name from input
+#         elif type(relation) == radb.ast.Rename:
+#             relations_with_name[relation.relname] = (relation, relation.inputs[0].rel, [])
+
+#     return relations_with_name
+
+# #recusively get all relations included in the statement
+# def get_relations(stmt: radb.ast.RelExpr):
+#     relations: List[radb.ast.RelExpr] = []
+
+#     # recusion end => return the relation or rename
+#     if type(stmt) == radb.ast.RelRef or type(stmt) == radb.ast.Rename:
+#         relations.append(stmt)
+#         return relations
+#     # cross => get relations to the left and relations to the right and merge them together with existing relations
+#     elif type(stmt) == radb.ast.Cross:
+#         leftRelations: List[radb.ast.RelExpr] = get_relations(stmt.inputs[0]) #stmt.inputs[0] = left
+#         rightRelations: List[radb.ast.RelExpr] = get_relations(stmt.inputs[1]) #stmt.inputs[1] = right
+#         relations.extend(leftRelations)
+#         relations.extend(rightRelations)
+#         return relations
+#     # something else => dig deeper for relations
+#     else:
+#         deeper_relations = get_relations(stmt.inputs[0])
+#         if len(deeper_relations) > 0:
+#             relations.extend(deeper_relations)
+#         return relations
