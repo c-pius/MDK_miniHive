@@ -62,9 +62,9 @@ class TestRulePushDownSelections(unittest.TestCase):
         expected_expr = radb.parse.one_statement_from_string(expected)        
         self.assertEqual(str(computed_expr), str(expected_expr))
 
-    # def test_select_select_person(self):
-    #     self._check("\select_{gender = 'f'} (\select_{age = 16} Person);",
-    #                 "\select_{gender = 'f'} (\select_{age = 16} Person);")
+    def test_select_select_person(self):
+        self._check("\select_{gender = 'f'} (\select_{age = 16} Person);",
+                    "\select_{gender = 'f'} (\select_{age = 16} Person);")
 
     def test_select_person(self):
         self._check("\select_{'f' = gender} Person;",
@@ -204,13 +204,13 @@ class TestAllSteps(unittest.TestCase):
         expected_expr = radb.parse.one_statement_from_string(expected)        
         self.assertEqual(str(computed_expr), str(expected_expr))
 
-    # def test_project_select_person(self):
-    #     self._check("\project_{name}(\select_{gender='f' and age=16} Person);",
-    #                 "\project_{name}(\select_{gender = 'f' and age = 16} Person);")
+    def test_project_select_person(self):
+        self._check("\project_{name}(\select_{gender='f' and age=16} Person);",
+                    "\project_{name}(\select_{gender = 'f' and age = 16} Person);")
 
-    # def test_project_select_person2(self):
-    #     self._check("\select_{Person.name = Eats.name and Person.name = Eats.pizza} (Person \cross Eats);",
-    #                  "Person \join_{Person.name = Eats.name and Person.name = Eats.pizza} Eats;")
+    def test_project_select_person2(self):
+        self._check("\select_{Person.name = Eats.name and Person.name = Eats.pizza} (Person \cross Eats);",
+                     "Person \join_{Person.name = Eats.name and Person.name = Eats.pizza} Eats;")
 
     def test_cross_cross(self):
         self._check("""\project_{Person.name} \select_{Eats.pizza = Serves.pizza and Person.name = Eats.name}
