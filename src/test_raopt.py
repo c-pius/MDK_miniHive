@@ -28,6 +28,18 @@ class TestRuleBreakUpSelections(unittest.TestCase):
         expected_expr = radb.parse.one_statement_from_string(expected)        
         self.assertEqual(str(computed_expr), str(expected_expr))
 
+    def test(self):
+        self._check("\select_{E.pizza = 'mushroom' and E.price < 10 and foo = 'bar'} \\rename_{E: *}(Eats);",
+                    "\select_{E.pizza = 'mushroom'} \select_{E.price < 10} \select_{foo = 'bar'} \\rename_{E: *}(Eats);")
+
+    def test_test(self):
+        self._check("\select_{E.pizza = 'mushroom' and E.price < 10} (\\rename_{E: *}(Eats) \cross (\select_{foo='bar' and bar='foo'} Person));",
+                    "\select_{E.pizza = 'mushroom'} \select_{E.price < 10} ((\\rename_{E: *}(Eats)) \cross (\select_{foo='bar'} \select_{bar='foo'} Person));")
+
+    def test_test_test(self):
+        self._check("\select_{E.pizza = 'mushroom' and E.price < 10} (\\rename_{E: *}(Eats) \join_{E.foo = Person.bar} (\select_{foo='bar' and bar='foo'} Person));",
+                    "\select_{E.pizza = 'mushroom'} \select_{E.price < 10} ((\\rename_{E: *}(Eats)) \join_{E.foo = Person.bar} (\select_{foo='bar'} \select_{bar='foo'} Person));")
+
     def test_break_selections_select_gender_age_person(self):
         self._check("\select_{Person.gender = 'f' and Person.age = 16}(Person);",
                     "\select_{Person.gender = 'f'} (\select_{Person.age = 16} Person);")
@@ -152,6 +164,22 @@ class TestMergeSelections(unittest.TestCase):
         self._check("Pizzeria \cross (\select_{pizza = 'mushroom'} \select_{price = 10} Serves);",
                     "Pizzeria \cross (\select_{pizza = 'mushroom' and price = 10} Serves);")
 
+    def test(self):
+        self._check("\select_{name = 'Amy'} \select_{gender = 'f'} \select_{foo = 'bar'} Person;",
+                    "\select_{name = 'Amy' and gender = 'f' and foo = 'bar'} Person;")
+
+    def test_test(self):
+        self._check("(\select_{pizza = 'mushroom'} \select_{price = 10} Pizzeria) \cross (\select_{pizza = 'mushroom'} \select_{price = 10} Serves);",
+                    "(\select_{pizza = 'mushroom' and price = 10} Pizzeria) \cross (\select_{pizza = 'mushroom' and price = 10} Serves);")
+
+    def test_test_test(self):
+        self._check("(\select_{pizza = 'mushroom'} \select_{price = 10} Pizzeria) \join_{Pizzeria.foo = Serves.bar} (\select_{pizza = 'mushroom'} \select_{price = 10} Serves);",
+                    "(\select_{pizza = 'mushroom' and price = 10} Pizzeria) \join_{Pizzeria.foo = Serves.bar} (\select_{pizza = 'mushroom' and price = 10} Serves);")
+
+    def test_test_test_test(self):
+        self._check("\select_{name = 'Amy'} \select_{gender = 'f' and test = 'test'} \select_{foo = 'bar'} Person;",
+                    "\select_{name = 'Amy' and (gender = 'f' and test = 'test') and foo = 'bar'} Person;")
+
 
 '''
 Tests the introduction of joins.
@@ -181,6 +209,12 @@ class TestIntroduceJoins(unittest.TestCase):
                        (Person \cross Eats)) \cross Serves);""",
                     """(Person \join_{Person.name = Eats.name} Eats) \join_{Eats.pizza =
                        Serves.pizza} Serves;""")
+
+    def test(self):
+        self._check("""\select_{Eats.pizza = Serves.pizza and Eats.foo = Serves.bar}((\select_{Person.name = Eats.name}
+                       (Person \cross Eats)) \cross Serves);""",
+                    """(Person \join_{Person.name = Eats.name} Eats) \join_{Eats.pizza =
+                       Serves.pizza and Eats.foo = Serves.bar} Serves;""")
 
 
 '''

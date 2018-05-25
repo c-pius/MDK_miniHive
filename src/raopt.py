@@ -7,7 +7,7 @@ def rule_introduce_joins(stmt):
 
 def introduce_joins(stmt):
     # bottom => return statement
-    if type(stmt) == radb.ast.RelRef:
+    if type(stmt) == radb.ast.RelRef or type(stmt) == radb.ast.Rename:
         return stmt
     # project => dig deeper
     elif type(stmt) == radb.ast.Project:
@@ -17,18 +17,23 @@ def introduce_joins(stmt):
         left = introduce_joins(stmt.inputs[0])
         right = introduce_joins(stmt.inputs[1])
         return radb.ast.Cross(left, right)
+    # join => dig deeper in both sides
+    elif type(stmt) == radb.ast.Join:
+        left = introduce_joins(stmt.inputs[0])
+        right = introduce_joins(stmt.inputs[1])
+        return radb.ast.Join(left, stmt.cond, right)
     # select
     elif type(stmt) == radb.ast.Select:
         # get the expression
         expression = stmt.cond
 
-        # combined select using at least one joining expression => break it up and introduce joins to the new statement
-        if (expression.op == sym.AND and 
-            (is_expression_with_multiple_relation_attributes(expression.inputs[0]) or is_expression_with_multiple_relation_attributes(expression.inputs[1]))):
-            broken_up_statement = break_up_single_selection(stmt)
+        # combined select using joining expression => break it up and introduce joins to the new statement
+        if (expression.op == sym.AND and
+            is_joining_expression(expression)):
+            new_input_using_joins = radb.ast.Select(expression, introduce_joins(stmt.inputs[0]))
+            broken_up_statement = break_up_single_selection(new_input_using_joins)
             return introduce_joins(broken_up_statement)
-        
-        if is_expression_with_multiple_relation_attributes(expression):
+        elif is_expression_with_multiple_relation_attributes(expression):
             # introduce a single join for the given expression
             stmt_with_join = introduce_single_join(stmt.inputs[0], expression)
             # join was introduced => check for further joins
@@ -40,13 +45,32 @@ def introduce_joins(stmt):
         # not a join condition selection => keep the select and check for further joins
         else:
             return radb.ast.Select(stmt.cond, introduce_joins(stmt.inputs[0]))
-    elif type(stmt) == radb.ast.Join:
-        left = introduce_joins(stmt.inputs[0])
-        right = introduce_joins(stmt.inputs[1])
-        return radb.ast.Join(left, stmt.cond, right)
     else:
         return stmt
 
+
+def is_joining_expression(expression):
+    single_conditions = get_single_conditions(expression)
+    
+    # if one condition is not a joining condition => cannot be used to introduce join
+    for condition in single_conditions:
+        if not is_expression_with_multiple_relation_attributes(condition):
+            return False
+
+    # get all included relations
+    included_relations = {}
+    for condition in single_conditions:
+        attributes = get_multiple_relation_expression_attributes(condition)
+        for attribute in attributes:
+            relation_name, _ = attribute
+            included_relations[relation_name] = True
+
+    # if only two realtions included the condition can be pushed down
+    if len(included_relations) == 2:
+        return True
+    else:
+        return False
+    
 # recursivley merges a SINGLE expression to a cross
 def introduce_single_join(stmt, expression):
     # bottom => return statement
@@ -61,7 +85,7 @@ def introduce_single_join(stmt, expression):
     # cross
     elif type(stmt) == radb.ast.Cross:
         # check if the expression applies to the cross => introduce join and remove cross
-        if is_cross_using_both_relations(stmt, expression):
+        if is_cross_or_join_using_both_relations(stmt, expression):
             return radb.ast.Join(stmt.inputs[0], expression, stmt.inputs[1])
         # expression does not apply to the cross => dig deeper in both sides
         else:
@@ -69,7 +93,7 @@ def introduce_single_join(stmt, expression):
             right = introduce_single_join(stmt.inputs[1], expression)
             return radb.ast.Cross(left, right)
     elif type(stmt) == radb.ast.Join:
-        if is_cross_using_both_relations(stmt, expression):
+        if is_cross_or_join_using_both_relations(stmt, expression):
             new_join_expression = radb.ast.ValExprBinaryOp(stmt.cond, sym.AND, expression)
             return radb.ast.Join(stmt.inputs[0], new_join_expression, stmt.inputs[1])
     # cannot go any further
@@ -78,7 +102,7 @@ def introduce_single_join(stmt, expression):
 
 
 # checks wether the current stmt is a cross combining both relations used in the expression
-def is_cross_using_both_relations(stmt, expression):
+def is_cross_or_join_using_both_relations(stmt, expression):
     assert(type(stmt) == radb.ast.Cross or type(stmt) == radb.ast.Join)
     
     # get statements of the cross
@@ -145,6 +169,11 @@ def merge_selections(stmt):
         left = merge_selections(stmt.inputs[0])
         right = merge_selections(stmt.inputs[1])
         return radb.ast.Cross(left, right)
+    # join => dig deeper in both sides
+    elif type(stmt) == radb.ast.Join:
+        left = merge_selections(stmt.inputs[0])
+        right = merge_selections(stmt.inputs[1])
+        return radb.ast.Join(left, stmt.cond, right)
     # select
     elif type(stmt) == radb.ast.Select:
         # check if the following statement is also select and pull the second selct up
@@ -272,7 +301,7 @@ def push_down_select_using_multiple_relations(stmt, expression):
     # cross
     elif type(stmt) == radb.ast.Cross:
         # check if the expression applies to the cross => introduce join and remove cross
-        if is_cross_using_both_relations(stmt, expression):
+        if is_cross_or_join_using_both_relations(stmt, expression):
             return radb.ast.Select(expression, stmt)
         # expression does not apply to the cross => dig deeper in both sides
         else:
@@ -359,23 +388,38 @@ def break_up_selections(stmt):
         return radb.ast.Project(stmt.attrs, break_up_selections(stmt.inputs[0]))
     #create a new cross from both sides broken up
     elif type(stmt) == radb.ast.Cross:
-        left = rule_break_up_selections(stmt.inputs[0])
-        right = rule_break_up_selections(stmt.inputs[1])
+        left = break_up_selections(stmt.inputs[0])
+        right = break_up_selections(stmt.inputs[1])
         return radb.ast.Cross(left, right)
+    elif type(stmt) == radb.ast.Join:
+        left = break_up_selections(stmt.inputs[0])
+        right = break_up_selections(stmt.inputs[1])
+        return radb.ast.Join(left, stmt.cond, right)
     #can't break up anything else
     else:
         return stmt   
 
 def break_up_single_selection(stmt: radb.ast.Select):
-    expression = stmt.cond
-    if expression.op == sym.AND:
-        return break_up(stmt.cond.inputs, stmt.inputs[0])
-    else:
-        return stmt
+
+    # split up expression using AND into its single components 
+    single_expressions = get_single_conditions(stmt.cond)
+
+    # dig deeper to break up following selects, too
+    broken_up_statement = break_up_selections(stmt.inputs[0])
+
+    # apply single selects to the reamining statement
+    for expression in single_expressions:
+        broken_up_statement = radb.ast.Select(expression, broken_up_statement)
+
+    return broken_up_statement
 
 
-def break_up(conditions: [], input: radb.ast.RelExpr):
-    if len(conditions) == 1:
-        return radb.ast.Select(conditions[0], input)
+def get_single_conditions(expression):
+    single_expressions = []
+    if expression.op == sym.AND:        
+        single_expressions.extend(get_single_conditions(expression.inputs[1]))
+        single_expressions.extend(get_single_conditions(expression.inputs[0]))
     else:
-        return radb.ast.Select(conditions[0], break_up(conditions[1:], input))
+        single_expressions.append(expression)
+
+    return single_expressions
