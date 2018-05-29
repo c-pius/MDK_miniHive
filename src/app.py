@@ -1,18 +1,34 @@
 import sqlparse
 import sql2ra
 import test_sql2ra
-
-
 import radb.parse
 import raopt
-# The data dictionary describes the relational schema.
-dd = {}
-dd["Person"] = {"name": "string", "age": "integer", "gender": "string"}
-dd["Eats"] = {"name": "string", "pizza": "string"}
 
-ra = radb.parse.one_statement_from_string("\select_{gender = 'm'} (Person \cross Eats);")
-new = raopt.rule_push_down_selections(ra, dd)
-print(new)
+
+import luigi
+import radb
+import ra2mr
+
+
+# Take a relational algebra query...
+raquery = radb.parse.one_statement_from_string("Person \join_{Person.name = Eats.name} (\select_{pizza='mushroom'} Eats);")
+
+
+# ... translate it into a luigi task encoding a MapReduce workflow...
+task = ra2mr.task_factory(raquery, env=ra2mr.ExecEnv.LOCAL)
+
+# ... and run the task on Hadoop, using HDFS for input and output:
+# (for now, we are happy working with luigis local scheduler).
+luigi.build([task], local_scheduler=True)
+
+# # The data dictionary describes the relational schema.
+# dd = {}
+# dd["Person"] = {"name": "string", "age": "integer", "gender": "string"}
+# dd["Eats"] = {"name": "string", "pizza": "string"}
+
+# ra = radb.parse.one_statement_from_string("\select_{gender = 'm'} (Person \cross Eats);")
+# new = raopt.rule_push_down_selections(ra, dd)
+# print(new)
 
 # ra1 = radb.parse.one_statement_from_string("\select_{Person.gender = 'f' and Person.age = 16}(Person);")
 # ra2 = radb.parse.one_statement_from_string("\project_{name}(\select_{gender='f' and age=16}(Person));")

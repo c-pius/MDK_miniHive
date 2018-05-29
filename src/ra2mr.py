@@ -131,11 +131,21 @@ class JoinTask(RelAlgQueryTask):
         json_tuple = json.loads(tuple)
         
         raquery = radb.parse.one_statement_from_string(self.querystring)
-        condition = raquery.cond
+        stmt_condition = raquery.cond
 
         ''' ...................... fill in your code below ........................'''
 
-        yield("foo", "bar")
+        for condition in raopt.get_single_conditions(stmt_condition):
+            left = str(condition.inputs[0])
+            right = str(condition.inputs[1])
+
+            left_rel, _ = left.split('.')
+            right_rel, _ = right.split('.')
+
+            if left_rel == relation and left in json_tuple:
+                yield(json_tuple[left], tuple)
+            elif right_rel == relation and right in json_tuple:
+                yield(json_tuple[right], tuple)
 
         ''' ...................... fill in your code above ........................'''
 
@@ -144,11 +154,18 @@ class JoinTask(RelAlgQueryTask):
         raquery = radb.parse.one_statement_from_string(self.querystring)
         
         ''' ...................... fill in your code below ........................'''
-
-        yield("foo", "bar")
+        joined_tuple = {}
+        for input in values:
+            json_tuple = json.loads(input)
+            for attribute_key in json_tuple.keys():
+                joined_tuple[attribute_key] = json_tuple[attribute_key]
+            
+        json_output = json.dumps(joined_tuple)
+        yield(key, json_output)
         
         ''' ...................... fill in your code above ........................'''   
 
+import raopt
 
 class SelectTask(RelAlgQueryTask):
 
@@ -163,11 +180,32 @@ class SelectTask(RelAlgQueryTask):
         relation, tuple = line.split('\t')
         json_tuple = json.loads(tuple)
 
-        condition = radb.parse.one_statement_from_string(self.querystring).cond
+        stmt_condition = radb.parse.one_statement_from_string(self.querystring).cond
         
         ''' ...................... fill in your code below ........................'''
 
-        yield("foo", "bar")
+        for condition in raopt.get_single_conditions(stmt_condition):
+            rel_name, attr_name = raopt.get_single_relation_expression_attribute(condition)
+            attr_value = next((attribute for attribute in condition.inputs if type(attribute) != radb.ast.AttrRef), None)
+
+            if attr_name == None or attr_value == None:
+                return
+           
+            attr_value = str(attr_value).replace("'", "")
+
+            if rel_name == None:
+                rel_name = relation
+
+            attr_identifier = "{}.{}".format(rel_name, attr_name)
+
+            if not attr_identifier in json_tuple:
+                return
+
+            if not str(json_tuple[attr_identifier]) == attr_value:
+                return
+
+        yield(relation, tuple)
+
         
         ''' ...................... fill in your code above ........................'''
 
@@ -188,8 +226,18 @@ class RenameTask(RelAlgQueryTask):
         raquery = radb.parse.one_statement_from_string(self.querystring)
         
         ''' ...................... fill in your code below ........................'''
+        
+        renamed_relation_name = raquery.relname
+    
+        renamed_tuple = {}
+        for attribute_key in json_tuple.keys():
+            value = json_tuple[attribute_key]
+            _, attribute_name = attribute_key.split('.')
+            renamed_tuple['{}.{}'.format(renamed_relation_name, attribute_name)] = value
 
-        yield("foo", "bar")
+        json_output = json.dumps(renamed_tuple)
+        print(json_output)
+        yield(renamed_relation_name, json_output)
         
         ''' ...................... fill in your code above ........................'''
 
@@ -208,10 +256,23 @@ class ProjectTask(RelAlgQueryTask):
         json_tuple = json.loads(tuple)
 
         attrs = radb.parse.one_statement_from_string(self.querystring).attrs
+        attrs = list(map(lambda attr: str(attr), attrs))
 
         ''' ...................... fill in your code below ........................'''
+        # attrs = list(map(lambda attr: "{}.{}".format(relation, str(attr)), attrs))
 
-        yield("foo", "bar")
+        projected_attributes = {}
+        for attr_key in json_tuple:
+            attr_tuple = attr_key.split('.')
+            attr_name = None
+            if len(attr_tuple) == 2:
+                _, attr_name = attr_tuple
+
+            if attr_key in attrs or (attr_name and attr_name in attrs):
+                projected_attributes[attr_key] = json_tuple[attr_key]
+
+        print(str(json.dumps(projected_attributes)))
+        yield(1, json.dumps(projected_attributes))
         
         ''' ...................... fill in your code above ........................'''
 
@@ -219,8 +280,13 @@ class ProjectTask(RelAlgQueryTask):
     def reducer(self, key, values):
 
         ''' ...................... fill in your code below ........................'''
+        unique_inputs = {}
+        for input in values:
+            unique_inputs[input] = 1
+        
+        for input in unique_inputs.keys():
+            yield(1, input)
 
-        yield("foo", "bar")
 
         ''' ...................... fill in your code above ........................'''
         

@@ -221,7 +221,7 @@ class TestMREvaluation(object):
         computed = self._evaluate(querystring)
         assert len(computed) == 20
 
-    def test_person_join_eats(self):
+    def test_person_join_eats2(self):
         querystring = "(\select_{gender='female'} Person) \join_{Person.name = Eats.name} Eats;"
         computed = self._evaluate(querystring)
         assert len(computed) == 5
