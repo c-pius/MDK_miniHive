@@ -127,6 +127,7 @@ class JoinTask(RelAlgQueryTask):
 
     
     def mapper(self, line):
+
         relation, tuple = line.split('\t')
         json_tuple = json.loads(tuple)
         
@@ -135,34 +136,62 @@ class JoinTask(RelAlgQueryTask):
 
         ''' ...................... fill in your code below ........................'''
 
+        condition_values = []
         for condition in raopt.get_single_conditions(stmt_condition):
             left = str(condition.inputs[0])
             right = str(condition.inputs[1])
 
-            left_rel, _ = left.split('.')
-            right_rel, _ = right.split('.')
+            if left in json_tuple:
+                condition_values.append(json_tuple[left])
+            elif right in json_tuple:
+                condition_values.append(json_tuple[right])
 
-            if left_rel == relation and left in json_tuple:
-                yield(json_tuple[left], tuple)
-            elif right_rel == relation and right in json_tuple:
-                yield(json_tuple[right], tuple)
+        if len(condition_values) > 0:
+            condition_key = json.dumps(condition_values)
+            yield(condition_key, (relation, tuple))
+
 
         ''' ...................... fill in your code above ........................'''
 
 
     def reducer(self, key, values):
         raquery = radb.parse.one_statement_from_string(self.querystring)
-        
+               
+        values_list = [value for value in values]
+
         ''' ...................... fill in your code below ........................'''
-        joined_tuple = {}
-        for input in values:
-            json_tuple = json.loads(input)
-            for attribute_key in json_tuple.keys():
-                joined_tuple[attribute_key] = json_tuple[attribute_key]
-            
-        json_output = json.dumps(joined_tuple)
-        yield(key, json_output)
-        
+        all_tuples = {}
+        for input1 in values_list:
+            joined_tuple = {}
+
+            relation1, input_tuple1 = input1
+            json_tuple1 = json.loads(input_tuple1)
+
+            for input2 in values_list:
+                relation2, input_tuple2 = input2
+                json_tuple2 = json.loads(input_tuple2)
+
+                if relation1 != relation2:
+                    for attribute_key1 in json_tuple1.keys():
+                        joined_tuple[attribute_key1] = json_tuple1[attribute_key1]
+                    for attribute_key2 in json_tuple2.keys():
+                        joined_tuple[attribute_key2] = json_tuple2[attribute_key2]
+
+                    if len(joined_tuple.keys()) > 0:
+                        output_json = json.dumps(joined_tuple)
+                        all_tuples[output_json] = 1
+
+        distinct_output_tuples = []
+        for json_output in all_tuples.keys():
+            output_dict = json.loads(json_output)
+
+            already_added = next((existing for existing in distinct_output_tuples if set(output_dict.items()).issubset(set(existing.items()))), None)
+            if already_added == None:
+                distinct_output_tuples.append(output_dict)
+
+        for output_tuple in distinct_output_tuples:
+            yield(4711, json.dumps(output_tuple))
+
         ''' ...................... fill in your code above ........................'''   
 
 import raopt
@@ -236,7 +265,6 @@ class RenameTask(RelAlgQueryTask):
             renamed_tuple['{}.{}'.format(renamed_relation_name, attribute_name)] = value
 
         json_output = json.dumps(renamed_tuple)
-        print(json_output)
         yield(renamed_relation_name, json_output)
         
         ''' ...................... fill in your code above ........................'''
@@ -271,7 +299,6 @@ class ProjectTask(RelAlgQueryTask):
             if attr_key in attrs or (attr_name and attr_name in attrs):
                 projected_attributes[attr_key] = json_tuple[attr_key]
 
-        print(str(json.dumps(projected_attributes)))
         yield(1, json.dumps(projected_attributes))
         
         ''' ...................... fill in your code above ........................'''
@@ -280,13 +307,16 @@ class ProjectTask(RelAlgQueryTask):
     def reducer(self, key, values):
 
         ''' ...................... fill in your code below ........................'''
-        unique_inputs = {}
-        for input in values:
-            unique_inputs[input] = 1
-        
-        for input in unique_inputs.keys():
-            yield(1, input)
+        distinct_tuples = []
+        for json_tuple in values:
+            tuple = json.loads(json_tuple)
 
+            already_added = next((existing for existing in distinct_tuples if set(tuple.items()).issubset(set(existing.items()))), None)
+            if already_added == None:
+                distinct_tuples.append(tuple)
+
+        for output_tuple in distinct_tuples:
+            yield(1, json.dumps(output_tuple))
 
         ''' ...................... fill in your code above ........................'''
         

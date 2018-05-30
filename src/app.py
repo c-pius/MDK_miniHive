@@ -11,7 +11,9 @@ import ra2mr
 
 
 # Take a relational algebra query...
-raquery = radb.parse.one_statement_from_string("Person \join_{Person.name = Eats.name} (\select_{pizza='mushroom'} Eats);")
+# raquery = radb.parse.one_statement_from_string("Person \join_{Person.name = Eats.name} (\select_{pizza='mushroom'} Eats);")
+# raquery = radb.parse.one_statement_from_string("\project_{Person.name, Eats.pizza} (Person \join_{Person.name = Eats.name} Eats);")
+raquery = radb.parse.one_statement_from_string("\project_{Person.name, Serves.pizza} ((Person \join_{Person.name = Eats.name} Eats) \join_{Eats.pizza = Serves.pizza} Serves);")
 
 
 # ... translate it into a luigi task encoding a MapReduce workflow...
