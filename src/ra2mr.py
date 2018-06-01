@@ -136,19 +136,25 @@ class JoinTask(RelAlgQueryTask):
 
         ''' ...................... fill in your code below ........................'''
 
-        condition_values = []
-        for condition in raopt.get_single_conditions(stmt_condition):
-            left = str(condition.inputs[0])
-            right = str(condition.inputs[1])
+        single_conditions = raopt.get_single_conditions(stmt_condition)
+        
+        operand_values = []
+        for condition in single_conditions:
+            # get operands of the condition (convert to string to find it in the json_tuple)
+            left_operand = str(condition.inputs[0])
+            right_operand = str(condition.inputs[1])
 
-            if left in json_tuple:
-                condition_values.append(json_tuple[left])
-            elif right in json_tuple:
-                condition_values.append(json_tuple[right])
+            # determine the values of both operands and add them to the list of operand values
+            if left_operand in json_tuple:
+                operand_values.append(json_tuple[left_operand])
+            elif right_operand in json_tuple:
+                operand_values.append(json_tuple[right_operand])
 
-        if len(condition_values) > 0:
-            condition_key = json.dumps(condition_values)
-            yield(condition_key, (relation, tuple))
+        # only yield if there is at least one value to join on
+        if len(operand_values) > 0:
+            # key is a list of the evaluated values that have to match in json format
+            join_key = json.dumps(operand_values)
+            yield(join_key, (relation, tuple))
 
 
         ''' ...................... fill in your code above ........................'''
@@ -156,14 +162,16 @@ class JoinTask(RelAlgQueryTask):
 
     def reducer(self, key, values):
         raquery = radb.parse.one_statement_from_string(self.querystring)
-               
+
+        # iterating two time of values does not work => build own list of values  
         values_list = [value for value in values]
 
         ''' ...................... fill in your code below ........................'''
-        all_tuples = {}
+        joined_relation_name = None
+
+        all_joined_tuples = []
         for input1 in values_list:
             joined_tuple = {}
-
             relation1, input_tuple1 = input1
             json_tuple1 = json.loads(input_tuple1)
 
@@ -171,26 +179,40 @@ class JoinTask(RelAlgQueryTask):
                 relation2, input_tuple2 = input2
                 json_tuple2 = json.loads(input_tuple2)
 
+                # only join tuples if the relation differs
                 if relation1 != relation2:
+                    
+                    # save a new relation name
+                    if joined_relation_name == None:
+                        relation_names = [relation1, relation2]
+                        relation_names.sort()
+                        joined_relation_name = "{}\join\{}".format(relation_names[0], relation_names[1])
+
+                    # add all attributes from relation1
                     for attribute_key1 in json_tuple1.keys():
                         joined_tuple[attribute_key1] = json_tuple1[attribute_key1]
+                    # add all attributes from relation2
                     for attribute_key2 in json_tuple2.keys():
                         joined_tuple[attribute_key2] = json_tuple2[attribute_key2]
 
                     if len(joined_tuple.keys()) > 0:
-                        output_json = json.dumps(joined_tuple)
-                        all_tuples[output_json] = 1
+                        # convert the joined_tuple to json in order to use it as key for a dictionary
+                        json_joined_tuple = json.dumps(joined_tuple)
+                        all_joined_tuples.append(json_joined_tuple) # somehow json has to be used because otherwise the issubset function will not work
 
-        distinct_output_tuples = []
-        for json_output in all_tuples.keys():
-            output_dict = json.loads(json_output)
+        # filter out duplicate tuples
+        distinct_joined_tuples = []
+        for json_joined_tuple in all_joined_tuples:
+            joined_tuple = json.loads(json_joined_tuple) 
 
-            already_added = next((existing for existing in distinct_output_tuples if set(output_dict.items()).issubset(set(existing.items()))), None)
-            if already_added == None:
-                distinct_output_tuples.append(output_dict)
+            already_added_tuple = next((tuple for tuple in distinct_joined_tuples if set(joined_tuple.items()).issubset(set(tuple.items()))), None)
+            if already_added_tuple == None:
+                distinct_joined_tuples.append(joined_tuple)
 
-        for output_tuple in distinct_output_tuples:
-            yield(4711, json.dumps(output_tuple))
+        
+        for joined_tuple in distinct_joined_tuples:
+            json_joined_tuple = json.dumps(joined_tuple)
+            yield(joined_relation_name, json_joined_tuple)
 
         ''' ...................... fill in your code above ........................'''   
 
@@ -212,25 +234,32 @@ class SelectTask(RelAlgQueryTask):
         stmt_condition = radb.parse.one_statement_from_string(self.querystring).cond
         
         ''' ...................... fill in your code below ........................'''
+        single_conditions = raopt.get_single_conditions(stmt_condition)
 
-        for condition in raopt.get_single_conditions(stmt_condition):
-            rel_name, attr_name = raopt.get_single_relation_expression_attribute(condition)
-            attr_value = next((attribute for attribute in condition.inputs if type(attribute) != radb.ast.AttrRef), None)
+        for condition in single_conditions:
+            required_rel_name, required_attr_name = raopt.get_single_relation_expression_attribute(condition)
+            required_attr_value = next((attribute for attribute in condition.inputs if type(attribute) != radb.ast.AttrRef), None)
 
-            if attr_name == None or attr_value == None:
-                return
-           
-            attr_value = str(attr_value).replace("'", "")
-
-            if rel_name == None:
-                rel_name = relation
-
-            attr_identifier = "{}.{}".format(rel_name, attr_name)
-
-            if not attr_identifier in json_tuple:
+            # at least name and value of the operand have to be given (rel_name of the operand is optional)
+            if required_attr_name == None or required_attr_value == None:
                 return
 
-            if not str(json_tuple[attr_identifier]) == attr_value:
+            # TODO: ask in lab
+            # this is a quick fix and will not work if selection is {age = 16 and pizza = mushroom} Person \join Eats
+            if required_rel_name == None:
+                required_rel_name = relation
+
+            attribute_key = "{}.{}".format(required_rel_name, required_attr_name)
+
+            if not attribute_key in json_tuple:
+                return
+
+            # convert values to strings for comparison of all types
+            # remove the ' from the required_attr_value in order to make comparison more easy
+            required_attr_value = str(required_attr_value).replace("'", "")
+            actual_attr_value = str(json_tuple[attribute_key])
+
+            if not actual_attr_value == required_attr_value:
                 return
 
         yield(relation, tuple)
@@ -256,16 +285,18 @@ class RenameTask(RelAlgQueryTask):
         
         ''' ...................... fill in your code below ........................'''
         
+        # get new name of the relation
         renamed_relation_name = raquery.relname
     
+        # create a tuple that uses new relation names e.g. {foo.name = 'Christoph'} => {bar.name = 'Christoph'}
         renamed_tuple = {}
         for attribute_key in json_tuple.keys():
             value = json_tuple[attribute_key]
             _, attribute_name = attribute_key.split('.')
             renamed_tuple['{}.{}'.format(renamed_relation_name, attribute_name)] = value
 
-        json_output = json.dumps(renamed_tuple)
-        yield(renamed_relation_name, json_output)
+        json_renamed_tuple = json.dumps(renamed_tuple)
+        yield(renamed_relation_name, json_renamed_tuple)
         
         ''' ...................... fill in your code above ........................'''
 
@@ -284,22 +315,26 @@ class ProjectTask(RelAlgQueryTask):
         json_tuple = json.loads(tuple)
 
         attrs = radb.parse.one_statement_from_string(self.querystring).attrs
-        attrs = list(map(lambda attr: str(attr), attrs))
+        attributes_to_include = list(map(lambda attr: str(attr), attrs)) # build list of attributes as strings
 
         ''' ...................... fill in your code below ........................'''
-        # attrs = list(map(lambda attr: "{}.{}".format(relation, str(attr)), attrs))
 
+        # filter out attributes that are not requested
         projected_attributes = {}
         for attr_key in json_tuple:
             attr_tuple = attr_key.split('.')
+            # determine name of the attribute without relation
             attr_name = None
             if len(attr_tuple) == 2:
                 _, attr_name = attr_tuple
 
-            if attr_key in attrs or (attr_name and attr_name in attrs):
+            # check if either the attr_key (e.g. Person.age) or the attr_name (e.g. age) is included in the attrs
+            if attr_key in attributes_to_include:
+                projected_attributes[attr_key] = json_tuple[attr_key]
+            elif attr_name and attr_name in attributes_to_include: # TODO: check with test test_project_Person_gender line 217
                 projected_attributes[attr_key] = json_tuple[attr_key]
 
-        yield(1, json.dumps(projected_attributes))
+        yield(relation, json.dumps(projected_attributes))
         
         ''' ...................... fill in your code above ........................'''
 
@@ -307,16 +342,17 @@ class ProjectTask(RelAlgQueryTask):
     def reducer(self, key, values):
 
         ''' ...................... fill in your code below ........................'''
+        # filter out duplicate tuples
         distinct_tuples = []
         for json_tuple in values:
-            tuple = json.loads(json_tuple)
+            current_tuple = json.loads(json_tuple)
 
-            already_added = next((existing for existing in distinct_tuples if set(tuple.items()).issubset(set(existing.items()))), None)
-            if already_added == None:
-                distinct_tuples.append(tuple)
+            already_added_tuple = next((tuple for tuple in distinct_tuples if set(current_tuple.items()).issubset(set(tuple.items()))), None)
+            if already_added_tuple == None:
+                distinct_tuples.append(current_tuple)
 
-        for output_tuple in distinct_tuples:
-            yield(1, json.dumps(output_tuple))
+        for tuple in distinct_tuples:
+            yield(key, json.dumps(tuple))
 
         ''' ...................... fill in your code above ........................'''
         
