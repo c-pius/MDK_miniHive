@@ -8,6 +8,23 @@ from luigi.mock import MockTarget
 import radb
 import radb.ast
 import radb.parse
+from radb.parse import RAParser as sym
+
+# gets a list of conditions that were joined using AND
+def get_single_conditions(expression):
+    single_expressions = []
+    if expression.op == sym.AND:        
+        single_expressions.extend(get_single_conditions(expression.inputs[1]))
+        single_expressions.extend(get_single_conditions(expression.inputs[0]))
+    else:
+        single_expressions.append(expression)
+
+    return single_expressions
+
+# gets a tuple containing the relation name and the attribute name
+def get_single_relation_expression_attribute(expression: radb.ast.FuncValExpr):
+    return next(((attribute.rel, attribute.name) for attribute in expression.inputs if type(attribute) == radb.ast.AttrRef), None)
+
 
 '''
 Control where the input data comes from, and where output data should go.
@@ -136,7 +153,7 @@ class JoinTask(RelAlgQueryTask):
 
         ''' ...................... fill in your code below ........................'''
 
-        single_conditions = raopt.get_single_conditions(stmt_condition)
+        single_conditions = get_single_conditions(stmt_condition)
         
         operand_values = []
         for condition in single_conditions:
@@ -216,8 +233,6 @@ class JoinTask(RelAlgQueryTask):
 
         ''' ...................... fill in your code above ........................'''   
 
-import raopt
-
 class SelectTask(RelAlgQueryTask):
 
     def requires(self):
@@ -234,10 +249,10 @@ class SelectTask(RelAlgQueryTask):
         stmt_condition = radb.parse.one_statement_from_string(self.querystring).cond
         
         ''' ...................... fill in your code below ........................'''
-        single_conditions = raopt.get_single_conditions(stmt_condition)
+        single_conditions = get_single_conditions(stmt_condition)
 
         for condition in single_conditions:
-            required_rel_name, required_attr_name = raopt.get_single_relation_expression_attribute(condition)
+            required_rel_name, required_attr_name = get_single_relation_expression_attribute(condition)
             required_attr_value = next((attribute for attribute in condition.inputs if type(attribute) != radb.ast.AttrRef), None)
 
             # at least name and value of the operand have to be given (rel_name of the operand is optional)

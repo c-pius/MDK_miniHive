@@ -8,13 +8,17 @@
 import luigi
 import radb
 import ra2mr
+import ra2mr_initial
 
 
 # Take a relational algebra query...
-raquery = radb.parse.one_statement_from_string("\project_{pizza, Eats.name} \select_{pizza='mushroom'} Eats;")
+# raquery = radb.parse.one_statement_from_string("\project_{P.name} (\select_{P.gender='female'} \\rename_{P:*} (Person));")
+raquery = radb.parse.one_statement_from_string("(Person \join_{Person.name = Eats.name} Eats) " \
+                      "\join_{Eats.pizza = Serves.pizza} (\select_{pizzeria='Dominos'} Serves);")
+
 
 # ... translate it into a luigi task encoding a MapReduce workflow...
-task = ra2mr.task_factory(raquery, env=ra2mr.ExecEnv.LOCAL)
+task = ra2mr.task_factory(raquery, env=ra2mr.ExecEnv.HDFS)
 
 # ... and run the task on Hadoop, using HDFS for input and output:
 # (for now, we are happy working with luigis local scheduler).
