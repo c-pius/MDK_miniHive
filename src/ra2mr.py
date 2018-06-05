@@ -252,6 +252,8 @@ class SelectTask(RelAlgQueryTask):
         single_conditions = get_single_conditions(stmt_condition)
 
         for condition in single_conditions:
+            required_attr_key = str(condition)
+            print("required attr key: "+ required_attr_key)
             required_rel_name, required_attr_name = get_single_relation_expression_attribute(condition)
             required_attr_value = next((attribute for attribute in condition.inputs if type(attribute) != radb.ast.AttrRef), None)
 
@@ -259,23 +261,26 @@ class SelectTask(RelAlgQueryTask):
             if required_attr_name == None or required_attr_value == None:
                 return
 
-            # TODO: ask in lab
-            # this is a quick fix and will not work if selection is {age = 16 and pizza = mushroom} Person \join Eats
-            if required_rel_name == None:
-                required_rel_name = relation
+            # try to get value by full key
+            actual_attr_value = None
+            actual_attr_value = next((json_tuple[key] for key in json_tuple.keys() if key == required_attr_key), None)
 
-            attribute_key = "{}.{}".format(required_rel_name, required_attr_name)
+            # try to get value by attr_name
+            if actual_attr_value == None:
+                actual_attr_value = next((json_tuple[key] for key in json_tuple.keys() if key.endswith(required_attr_name)), None)
 
-            if not attribute_key in json_tuple:
+            # abort if no value available
+            if actual_attr_value == None:
                 return
 
             # convert values to strings for comparison of all types
             # remove the ' from the required_attr_value in order to make comparison more easy
             required_attr_value = str(required_attr_value).replace("'", "")
-            actual_attr_value = str(json_tuple[attribute_key])
+            actual_attr_value = str(actual_attr_value)
 
             if not actual_attr_value == required_attr_value:
                 return
+
 
         yield(relation, tuple)
 
