@@ -36,16 +36,19 @@ def translateStatment(tokens: sqlparse.sql.TokenList):
 def getProjectionIdentifiers(projectionToken: sqlparse.tokens.Token):
     attributes = []
 
-    # stupid approach by splitting identifers at ',' but works...
-    separatedIdentifers = str(projectionToken.normalized).replace(' ', '').split(',')
-    for identifier in separatedIdentifers:
-        values = identifier.split('.')
-        # length = 1 => simply state the identifier
-        if len(values) == 1:
-            attributes.append(radb.ast.AttrRef(None, str(values[0])))
-        # length = 2 => attribute made up of relation and identifier
-        elif len(values) == 2:
-            attributes.append(radb.ast.AttrRef(str(values[0]), str(values[1])))
+    # get list of all identifiers
+    identifiers = []
+    if type(projectionToken) == sqlparse.sql.Identifier:
+        identifiers.append(projectionToken)
+    elif type(projectionToken) == sqlparse.sql.IdentifierList:
+        identifiers = [token for token in projectionToken.tokens if type(token) == sqlparse.sql.Identifier]
+
+    # create attribute refs accordingly
+    for identifier in identifiers:
+        if len(identifier.tokens) == 1:
+            attributes.append(radb.ast.AttrRef(None, identifier.normalized))
+        elif len(identifier.tokens) == 3:
+            attributes.append(radb.ast.AttrRef(identifier.tokens[0].normalized, identifier.tokens[2].normalized))
 
     return attributes
 

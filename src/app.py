@@ -1,16 +1,6 @@
-# import sqlparse
-# import sql2ra
-# import test_sql2ra
-# import radb.parse
-# import raopt
-
-
 import luigi
 import radb
 import ra2mr
-import ra2mr_initial
-
-
 # Take a relational algebra query...
 # raquery = radb.parse.one_statement_from_string("\project_{P.name} (\select_{P.gender='female'} \\rename_{P:*} (Person));")
 raquery = radb.parse.one_statement_from_string("(Person \join_{Person.name = Eats.name} Eats) " \
@@ -18,11 +8,29 @@ raquery = radb.parse.one_statement_from_string("(Person \join_{Person.name = Eat
 
 
 # ... translate it into a luigi task encoding a MapReduce workflow...
-task = ra2mr.task_factory(raquery, env=ra2mr.ExecEnv.HDFS)
+task = ra2mr.task_factory(raquery, env=ra2mr.ExecEnv.LOCAL)
 
 # ... and run the task on Hadoop, using HDFS for input and output:
 # (for now, we are happy working with luigis local scheduler).
 luigi.build([task], local_scheduler=True)
+
+
+
+
+
+
+# import sqlparse
+# import sql2ra
+# import test_sql2ra
+# import radb.parse
+# import raopt
+
+# sql = "select distinct X.name, foo, bar from Person X where X.name = 'bla' and foo = 'bar' and bar = 'foo'"
+# stmt = sqlparse.parse(sql)[0]
+
+# ra = sql2ra.translate(stmt)
+# print(ra)
+
 
 # # The data dictionary describes the relational schema.
 # dd = {}
