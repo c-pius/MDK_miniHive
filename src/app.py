@@ -1,17 +1,56 @@
 import luigi
 import radb
 import ra2mr
+import sqlparse
+import raopt
+import sql2ra
+
 # Take a relational algebra query...
 
-#raquery = radb.parse.one_statement_from_string("\select_{Person.gender='female'}(Person);")
+#raquery = radb.parse.one_statement_from_string("\select_{gender = 'female' and pizza = 'mushroom'} (Person \join_{Person.name = Eats.name} Eats);")
 
-#raquery = radb.parse.one_statement_from_string("(Person \join_{Person.name = Eats.name} Eats) " \
-                    #   "\join_{Eats.pizza = Serves.pizza} (\select_{pizzeria='Dominos'} Serves);")
+dd = {}
+dd["Person"] = {"name": "string", "age": "integer", "gender": "string"}
+dd["Eats"] = {"name": "string", "pizza": "string"}
+dd["Serves"] = {"pizzeria": "string", "pizza": "string", "price": "integer"}
 
-raquery = radb.parse.one_statement_from_string("\select_{gender = 'female' and pizza = 'mushroom'} (Person \join_{Person.name = Eats.name} Eats);")
+# sqlstring = "select distinct * from Person, Eats, Serves " \
+#                     "where Person.name = Eats.name and Eats.pizza = Serves.pizza "\
+#                     "and Person.age = 16 and Serves.pizzeria = 'Little Ceasars'"
+
+# sqlstring = "select distinct e.pizza from Person p, Eats e where e.name = p.name and p.age > 20 and p.gender = 'female'"
+
+# sqlstring = """
+#             select distinct p.name
+#             from person p, eats e, serves s
+#             where p.name = e.name and e.pizza = s.pizza and s.pizzeria = 'Straw Hat' and p.gender = 'female'
+#             """
+
+# sqlstring = """
+#             select distinct s.pizzeria
+#             from person p, eats e, serves s
+#             where p.name = e.name and e.pizza = s.pizza and s.price < 10 and p.name = 'Amy'
+#             """
+
+sqlstring = """
+                select distinct *
+                from serves
+                where pizzeria = 'Chicago Pizza' and pizza = 'cheese' and price = 7.75
+            """
+
+stmt = sqlparse.parse(sqlstring)[0]
+ra0 = sql2ra.translate(stmt)
+
+ra1 = raopt.rule_break_up_selections(ra0)
+ra2 = raopt.rule_push_down_selections(ra1, dd)
+
+ra3 = raopt.rule_merge_selections(ra2)
+ra4 = raopt.rule_introduce_joins(ra3)
+
+print("ra4: " + str(ra4))
 
 # ... translate it into a luigi task encoding a MapReduce workflow...
-task = ra2mr.task_factory(raquery, env=ra2mr.ExecEnv.HDFS)
+task = ra2mr.task_factory(ra4, env=ra2mr.ExecEnv.LOCAL)
 
 # ... and run the task on Hadoop, using HDFS for input and output:
 # (for now, we are happy working with luigis local scheduler).

@@ -10,6 +10,8 @@ import radb.ast
 import radb.parse
 from radb.parse import RAParser as sym
 
+#TODO: ask, whether it's a problem if the attributes are ordered differently
+
 # gets a list of conditions that were joined using AND
 def get_single_conditions(expression):
     single_expressions = []
@@ -250,10 +252,9 @@ class SelectTask(RelAlgQueryTask):
         
         ''' ...................... fill in your code below ........................'''
         single_conditions = get_single_conditions(stmt_condition)
-
+        
         for condition in single_conditions:
             required_attr_key = str(condition)
-            print("required attr key: "+ required_attr_key)
             required_rel_name, required_attr_name = get_single_relation_expression_attribute(condition)
             required_attr_value = next((attribute for attribute in condition.inputs if type(attribute) != radb.ast.AttrRef), None)
 
@@ -278,9 +279,24 @@ class SelectTask(RelAlgQueryTask):
             required_attr_value = str(required_attr_value).replace("'", "")
             actual_attr_value = str(actual_attr_value)
 
-            if not actual_attr_value == required_attr_value:
-                return
-
+            if condition.op == sym.EQ:
+                if not actual_attr_value == required_attr_value:
+                    return
+            elif condition.op == sym.NE:
+                if actual_attr_value == required_attr_value:
+                    return
+            elif condition.op == sym.LT:
+                if float(actual_attr_value) >= float(required_attr_value):
+                    return
+            elif condition.op == sym.LE:
+                if float(actual_attr_value) > float(required_attr_value):
+                    return
+            elif condition.op == sym.GT:
+                if float(actual_attr_value) <= float(required_attr_value):
+                    return
+            elif condition.op == sym.GE:
+                if float(actual_attr_value) < float(required_attr_value):
+                    return
 
         yield(relation, tuple)
 
@@ -351,7 +367,7 @@ class ProjectTask(RelAlgQueryTask):
             # check if either the attr_key (e.g. Person.age) or the attr_name (e.g. age) is included in the attrs
             if attr_key in attributes_to_include:
                 projected_attributes[attr_key] = json_tuple[attr_key]
-            elif attr_name and attr_name in attributes_to_include: # TODO: check with test test_project_Person_gender line 217
+            elif attr_name and attr_name in attributes_to_include:
                 projected_attributes[attr_key] = json_tuple[attr_key]
 
         yield(relation, json.dumps(projected_attributes))
