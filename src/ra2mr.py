@@ -187,6 +187,7 @@ class JoinTask(RelAlgQueryTask):
 
         ''' ...................... fill in your code below ........................'''
         joined_relation_name = None
+        # joined_relation_name = self.step
 
         all_joined_tuples = []
         for input1 in values_list:
@@ -205,7 +206,7 @@ class JoinTask(RelAlgQueryTask):
                     if joined_relation_name == None:
                         relation_names = [relation1, relation2]
                         relation_names.sort()
-                        joined_relation_name = "{}\join\{}".format(relation_names[0], relation_names[1])
+                        joined_relation_name = "{}\join{}\{}".format(relation_names[0], self.step, relation_names[1])
 
                     # add all attributes from relation1
                     for attribute_key1 in json_tuple1.keys():
